@@ -79,9 +79,17 @@ final class LS_Armoury {
         $type = isset($input['type']) && is_scalar($input['type']) ? (string)$input['type'] : 'equipment';
         if (!in_array($type, array('ranged','melee','equipment'), true)) { $type = 'equipment'; }
         $result = array('type'=>$type, 'profile'=>array(), 'rules'=>array());
-        foreach (array('range','strength','ap','damage','attacks','special') as $key) {
+        foreach (array('range','strength','ap','damage','attacks','special','initiative_modifier') as $key) {
             if (!isset($input[$key]) || !is_scalar($input[$key])) { continue; }
             $value = trim((string)$input[$key]);
+            if ($key === 'initiative_modifier') {
+                // A weapon modifier is relative to the model's base Initiative.
+                if (preg_match('/^[+-]?(?:0|[1-9][0-9]?)$/', $value)) {
+                    $number = (int)$value;
+                    if ($number >= -99 && $number <= 99) { $result['profile'][$key] = $number > 0 ? '+' . $number : (string)$number; }
+                }
+                continue;
+            }
             if ($value !== '' && strlen($value) <= 80 && preg_match('/^[\p{L}\p{N} +*\/.,():\x27-]+$/u', $value)) { $result['profile'][$key] = $value; }
         }
         if (isset($input['rules']) && is_scalar($input['rules'])) {
@@ -318,7 +326,7 @@ final class LS_Armoury {
             $form .= '<div class="ls-profile-grid"><label>Type <select name="ls_equipment[type]">';
             foreach (array('equipment'=>'Equipment','ranged'=>'Ranged weapon','melee'=>'Melee weapon') as $value=>$label) { $form .= '<option value="' . esc_attr($value) . '" ' . selected($data['type'] ?? 'equipment', $value, false) . '>' . esc_html($label) . '</option>'; }
             $form .= '</select></label>';
-            foreach (array('range'=>'Range','strength'=>'Strength','ap'=>'AP','damage'=>'Damage','attacks'=>'Attacks','special'=>'Special') as $key=>$label) { $form .= '<label>' . esc_html($label) . '<input maxlength="80" name="ls_equipment[' . esc_attr($key) . ']" value="' . esc_attr((string)($data['profile'][$key] ?? '')) . '"></label>'; }
+            foreach (array('range'=>'Range','strength'=>'Strength','ap'=>'AP','damage'=>'Damage','attacks'=>'Attacks','initiative_modifier'=>'Initiative Modifier','special'=>'Special') as $key=>$label) { $form .= '<label>' . esc_html($label) . '<input maxlength="80" name="ls_equipment[' . esc_attr($key) . ']" value="' . esc_attr((string)($data['profile'][$key] ?? '')) . '"></label>'; }
             $form .= '<label>Rule names (comma-separated) <input name="ls_equipment[rules]" value="' . esc_attr(implode(', ', $data['rules'] ?? array())) . '"></label></div>';
         }
         if ($kind === 'unit') {
