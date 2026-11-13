@@ -34,6 +34,45 @@ final class LS_Armoury {
         return $profile;
     }
 
+    /** Edition-specific profile keys can be extended without changing the database schema. */
+    public static function datasheet_fields(): array {
+        return array_merge(self::profile_fields(), array('cool'=>'Cool', 'willpower'=>'Willpower',
+            'intelligence'=>'Intelligence', 'invulnerable_save'=>'Invulnerable Save'));
+    }
+
+    /** Sanitise a bounded list of named model profiles. Never accept arbitrary markup. */
+    public static function sanitise_model_profiles($input): array {
+        if (!is_array($input)) { return array(); }
+        $result = array();
+        foreach (array_slice($input, 0, 20) as $entry) {
+            if (!is_array($entry)) { continue; }
+            $name = isset($entry['name']) && is_scalar($entry['name']) ? trim((string)$entry['name']) : '';
+            if ($name === '' || strlen($name) > 100 || !preg_match('/^[\p{L}\p{N} .\x27()\/-]+$/u', $name)) { continue; }
+            $stats = array();
+            foreach (self::datasheet_fields() as $key => $label) {
+                if (!isset($entry[$key]) || !is_scalar($entry[$key])) { continue; }
+                $value = trim((string)$entry[$key]);
+                if ($value !== '' && strlen($value) <= 32 && preg_match('/^[a-zA-Z0-9+*\/-]+$/', $value)) { $stats[$key] = $value; }
+            }
+            $result[] = array('name'=>$name, 'characteristics'=>$stats);
+        }
+        return $result;
+    }
+
+    public static function sanitise_composition($input): array {
+        if (!is_array($input)) { return array(); }
+        $result = array();
+        foreach (array('minimum_models','maximum_models','starting_models','additional_model_points') as $key) {
+            if (!isset($input[$key]) || !is_scalar($input[$key])) { continue; }
+            $number = filter_var($input[$key], FILTER_VALIDATE_INT);
+            if ($number !== false && $number >= 0 && $number <= 100000) { $result[$key] = $number; }
+        }
+        if (isset($result['minimum_models'], $result['maximum_models']) && $result['minimum_models'] > $result['maximum_models']) { return array(); }
+        if (isset($result['starting_models'], $result['minimum_models']) && $result['starting_models'] < $result['minimum_models']) { return array(); }
+        if (isset($result['starting_models'], $result['maximum_models']) && $result['starting_models'] > $result['maximum_models']) { return array(); }
+        return $result;
+    }
+
     /** Publishing is one-way. Further rules changes require a separate draft release. */
     public static function publish(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
@@ -51,7 +90,6 @@ final class LS_Armoury {
             }
         }
         $context = self::browse_context($_POST);
-        if ($kind === 'unit' && $operation === 'edit' && $notice === 'updated') { $context['ls_edit_unit'] = $id; }
         wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
@@ -64,7 +102,6 @@ final class LS_Armoury {
         $version = isset($_POST['ls_version']) ? sanitize_text_field(wp_unslash($_POST['ls_version'])) : '';
         $notice = self::clone_release_data($source, $version) ? 'cloned' : 'clone_failed';
         $context = self::browse_context($_POST);
-        if ($kind === 'unit' && $operation === 'edit' && $notice === 'updated') { $context['ls_edit_unit'] = $id; }
         wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
@@ -176,6 +213,14 @@ final class LS_Armoury {
                                 $data['base_points'] = $points;
                                 $profile_input = isset($_POST['ls_profile']) && is_array($_POST['ls_profile']) ? wp_unslash($_POST['ls_profile']) : array();
                                 $data['profile'] = self::sanitise_profile($profile_input);
+                                if (isset($_POST['ls_model_profiles'])) {
+                                    $raw_models = is_array($_POST['ls_model_profiles']) ? wp_unslash($_POST['ls_model_profiles']) : array();
+                                    $data['model_profiles'] = self::sanitise_model_profiles($raw_models);
+                                }
+                                if (isset($_POST['ls_composition'])) {
+                                    $raw_composition = is_array($_POST['ls_composition']) ? wp_unslash($_POST['ls_composition']) : array();
+                                    $data['composition'] = self::sanitise_composition($raw_composition);
+                                }
                                 $values['faction_id'] = $faction;
                                 $values['data'] = wp_json_encode($data);
                                 $formats = array('%s','%s','%d','%s');
@@ -225,6 +270,26 @@ final class LS_Armoury {
                 $form .= '<label>' . esc_html($label) . '<input maxlength="32" name="ls_profile[' . esc_attr($key) . ']" value="' . esc_attr((string)($profile[$key] ?? '')) . '" placeholder="—"></label>';
             }
             $form .= '</div></div>';
+            $models = isset($data['model_profiles']) && is_array($data['model_profiles']) ? $data['model_profiles'] : array();
+            if (!$models) { $models = array(array('name'=>(string)$record->title, 'characteristics'=>$profile)); }
+            $form .= '<details class="ls-sheet-panel" open><summary>Model profiles (multiple stat lines)</summary><p class="description">Each row represents a model type. Blank names are ignored. Up to 20 model profiles per unit.</p>';
+            for ($i=0; $i<max(3, count($models)+1); $i++) {
+                if ($i >= 20) { break; }
+                $model = $models[$i] ?? array();
+                $stats = isset($model['characteristics']) && is_array($model['characteristics']) ? $model['characteristics'] : array();
+                $form .= '<fieldset class="ls-model-profile"><legend>Model ' . ($i+1) . '</legend><label>Model name <input maxlength="100" name="ls_model_profiles[' . $i . '][name]" value="' . esc_attr((string)($model['name'] ?? '')) . '"></label><div class="ls-profile-grid">';
+                foreach (self::datasheet_fields() as $key=>$label) {
+                    $form .= '<label>' . esc_html($label) . '<input maxlength="32" name="ls_model_profiles[' . $i . '][' . esc_attr($key) . ']" value="' . esc_attr((string)($stats[$key] ?? '')) . '"></label>';
+                }
+                $form .= '</div></fieldset>';
+            }
+            $form .= '</details>';
+            $composition = isset($data['composition']) && is_array($data['composition']) ? $data['composition'] : array();
+            $form .= '<details class="ls-sheet-panel"><summary>Unit composition</summary><div class="ls-profile-grid">';
+            foreach (array('minimum_models'=>'Minimum models','maximum_models'=>'Maximum models','starting_models'=>'Starting models','additional_model_points'=>'Additional model points') as $key=>$label) {
+                $form .= '<label>' . esc_html($label) . '<input type="number" min="0" max="100000" name="ls_composition[' . esc_attr($key) . ']" value="' . esc_attr(isset($composition[$key]) ? (string)$composition[$key] : '') . '"></label>';
+            }
+            $form .= '</div></details><details class="ls-sheet-panel"><summary>Wargear, rules and options (upcoming)</summary><p>Linked wargear, special rules and configurable upgrades arrive in later phases. Existing data is retained.</p></details>';
         }
         $form .= '<button class="button button-primary" type="submit">Save changes</button></form>';
         $form .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Permanently delete this draft record?&quot;);">' . $base . '<input type="hidden" name="ls_operation" value="delete"><button type="submit" class="button button-link-delete">Delete draft ' . esc_html($kind) . '</button></form>';
