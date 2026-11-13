@@ -29,3 +29,12 @@ I.2 account registration/login and ownership; II edition-aware catalogue admin; 
 ## Intellectual property
 
 No Games Workshop rule text, artwork, stats or points data are bundled. Confirm permissions and content rights before publicly distributing third-party game data. This project is independent and not affiliated with Games Workshop.
+
+## Phase I.2 — The Gates of the Strategium
+
+- Branded sign-in and registration forms inside `[legion_strategium]`.
+- Registration respects **Settings → General → Anyone can register**. Set **New User Default Role** to Subscriber; the plugin always explicitly creates subscribers.
+- 12-character minimum password, WordPress nonces, safe redirects, escaped output, and core authentication.
+- Authenticated command dashboard (placeholder counts until army features arrive), logout, and WordPress password reset link.
+- No email verification or anti-bot challenge is included yet. **Before opening public registration**, add verified-email and abuse protection, configure reliable transactional email, and review site privacy/terms. WordPress core's new-user email notification is not an email-verification gate.
+- If your WordPress security configuration blocks `admin-post.php`, allow the `ls_login`, `ls_register`, and `ls_logout` handlers.
