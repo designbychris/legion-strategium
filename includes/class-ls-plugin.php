@@ -13,7 +13,7 @@ final class LS_Plugin {
     }
     public static function admin_page(): void {
         if (!current_user_can('manage_options')) { wp_die(esc_html__('Access denied.', 'legion-strategium')); }
-        echo '<div class="wrap"><h1>' . esc_html__('The Legion Strategium', 'legion-strategium') . '</h1><p>' . esc_html__('Phase I.1 foundation installed. Edition and ruleset management will be introduced in subsequent phases.', 'legion-strategium') . '</p><p><strong>' . esc_html__('Database schema:', 'legion-strategium') . '</strong> ' . esc_html((string)get_option('ls_schema_version', 'not installed')) . '</p></div>';
+        echo '<div class="wrap"><h1>' . esc_html__('The Legion Strategium', 'legion-strategium') . '</h1><p>' . esc_html__('Phase I.3 commander identity foundations installed. Edition and ruleset management will be introduced in subsequent phases.', 'legion-strategium') . '</p><p><strong>' . esc_html__('Database schema:', 'legion-strategium') . '</strong> ' . esc_html((string)get_option('ls_schema_version', 'not installed')) . '</p></div>';
     }
     public static function assets(): void {
         global $post;
@@ -25,13 +25,14 @@ final class LS_Plugin {
         $head = '<section class="ls-shell"><p class="ls-kicker">LEGION STRATEGIUM</p><h2>The Legion Strategium</h2><p>Army Builder &amp; Battle Companion</p>' . LS_Accounts::notice();
         if (is_user_logged_in()) {
             $user = wp_get_current_user();
-            return $head . '<div class="ls-command"><p class="ls-kicker">COMMAND DECK</p><h3>Welcome, ' . esc_html($user->display_name) . '</h3><p>Your command dashboard is ready. Army creation will arrive in the next development phases.</p><div class="ls-stat-grid"><div><strong>0</strong><span>Armies</span></div><div><strong>0</strong><span>Battles</span></div><div><strong>3rd</strong><span>Initial edition</span></div></div>' . LS_Accounts::form('logout', $return) . '</div></section>';
+            return $head . '<div class="ls-command"><p class="ls-kicker">COMMAND DECK</p><h3>Welcome, ' . esc_html($user->display_name) . '</h3><p>Your command dashboard is ready. Army creation will arrive in the next development phases.</p><div class="ls-stat-grid"><div><strong>0</strong><span>Armies</span></div><div><strong>0</strong><span>Battles</span></div><div><strong>3rd</strong><span>Initial edition</span></div></div>' . LS_Accounts::profile_form($return) . LS_Accounts::form('logout', $return) . '</div></section>';
         }
         $register = (bool)get_option('users_can_register');
         $mode = isset($_GET['ls_view']) && sanitize_key(wp_unslash($_GET['ls_view'])) === 'register' && $register ? 'register' : 'login';
         $switch = $mode === 'login' && $register ? '<a href="' . esc_url(add_query_arg('ls_view', 'register', $return)) . '">Create a commander account</a>' : '<a href="' . esc_url(remove_query_arg('ls_view', $return)) . '">Already enlisted? Sign in</a>';
         $body = '<div class="ls-auth"><h3>' . ($mode === 'register' ? 'Enlist a Commander' : 'Commander Sign In') . '</h3>' . LS_Accounts::form($mode, $return) . '<p class="ls-auth-switch">' . $switch . '</p>';
         if ($mode === 'login') { $body .= '<p><a href="' . esc_url(wp_lostpassword_url($return)) . '">Forgot your password?</a></p>'; }
+        if ($mode === 'login') { $body .= LS_Accounts::resend_form($return); }
         if (!$register) { $body .= '<p class="ls-muted">Public registration is not enabled yet.</p>'; }
         return $head . $body . '</div></section>';
     }

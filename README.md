@@ -38,3 +38,8 @@ No Games Workshop rule text, artwork, stats or points data are bundled. Confirm 
 - Authenticated command dashboard (placeholder counts until army features arrive), logout, and WordPress password reset link.
 - No email verification or anti-bot challenge is included yet. **Before opening public registration**, add verified-email and abuse protection, configure reliable transactional email, and review site privacy/terms. WordPress core's new-user email notification is not an email-verification gate.
 - If your WordPress security configuration blocks `admin-post.php`, allow the `ls_login`, `ls_register`, and `ls_logout` handlers.
+
+
+## Phase I.3 — Commander Identity
+
+New registrations require email verification. Verification links expire after 24 hours; resend is available on the login screen. Pre-existing WordPress accounts remain eligible to sign in. Registration and resend requests are throttled per IP using WordPress transients; add an edge/WAF anti-bot solution before high-traffic public launch. Logged-in users can set a public commander name. Email and password management remain in WordPress for now. Ensure WordPress transactional email delivery works before enabling public registrations.
