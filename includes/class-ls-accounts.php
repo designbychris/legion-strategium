@@ -3,7 +3,8 @@ if (!defined('ABSPATH')) { exit; }
 final class LS_Accounts {
     public static function boot(): void {
         add_action('template_redirect', array(__CLASS__, 'verify_link'));
-        foreach (array('login','register','logout','profile','resend') as $action) {
+        add_action('template_redirect', array(__CLASS__, 'confirm_email_link'));
+        foreach (array('login','register','logout','profile','resend','account','email_change') as $action) {
             add_action('admin_post_nopriv_ls_' . $action, array(__CLASS__, $action));
             add_action('admin_post_ls_' . $action, array(__CLASS__, $action));
         }
@@ -58,7 +59,7 @@ final class LS_Accounts {
         self::redirect('signed_out', $url);
     }
     public static function notice(): string {
-        $messages = array('verify_required' => 'Please verify your email before signing in. You can request another verification email below.', 'verified' => 'Email verified. You can now sign in.', 'verification_invalid' => 'That verification link is invalid or has expired.', 'verification_sent' => 'If that address has a pending account, a verification email has been sent.', 'rate_limited' => 'Too many requests. Please try again later.', 'profile_saved' => 'Commander profile updated.', 'profile_invalid' => 'Please enter a valid commander name.', 'expired' => 'Your session expired. Please try again.', 'invalid_login' => 'Sign-in failed. Please check your credentials.', 'signed_in' => 'Welcome to the Strategium.', 'registered' => 'Account created. Check your email for a verification link before signing in.', 'closed' => 'New registrations are currently closed.', 'invalid_registration' => 'Please provide a valid commander name, email, and password of at least 12 characters.', 'unavailable' => 'That commander name or email is unavailable.', 'signed_out' => 'You have signed out.');
+        $messages = array('verify_required' => 'Please verify your email before signing in. You can request another verification email below.', 'verified' => 'Email verified. You can now sign in.', 'verification_invalid' => 'That verification link is invalid or has expired.', 'verification_sent' => 'If that address has a pending account, a verification email has been sent.', 'rate_limited' => 'Too many requests. Please try again later.', 'profile_saved' => 'Commander profile updated.', 'profile_invalid' => 'Please enter a valid commander name.', 'account_saved' => 'Account preferences saved.', 'email_pending' => 'Check your new email address to confirm the change.', 'email_confirmed' => 'Your email address has been updated.', 'email_invalid' => 'The email confirmation link is invalid or expired.', 'email_unavailable' => 'That email address is unavailable.', 'password_changed' => 'Password changed. Please sign in again.', 'password_invalid' => 'Your current password was incorrect or the new password did not meet requirements.', 'expired' => 'Your session expired. Please try again.', 'invalid_login' => 'Sign-in failed. Please check your credentials.', 'signed_in' => 'Welcome to the Strategium.', 'registered' => 'Account created. Check your email for a verification link before signing in.', 'closed' => 'New registrations are currently closed.', 'invalid_registration' => 'Please provide a valid commander name, email, and password of at least 12 characters.', 'unavailable' => 'That commander name or email is unavailable.', 'signed_out' => 'You have signed out.');
         $code = isset($_GET['ls_notice']) ? sanitize_key(wp_unslash($_GET['ls_notice'])) : '';
         return isset($messages[$code]) ? '<p class="ls-notice" role="status">' . esc_html($messages[$code]) . '</p>' : '';
     }
@@ -132,7 +133,74 @@ final class LS_Accounts {
     public static function profile_form(string $return): string {
         $name = (string)get_user_meta(get_current_user_id(), 'ls_commander_name', true);
         if ($name === '') { $name = wp_get_current_user()->display_name; }
-        return '<div class="ls-profile"><h3>Commander Profile</h3><form class="ls-auth-form" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_profile"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_profile', 'ls_nonce', true, false) . '<label>Public commander name<input required minlength="3" maxlength="60" name="ls_commander_name" value="' . esc_attr($name) . '"></label><button class="ls-button" type="submit">Save profile</button></form><p class="ls-muted">Your email and password can be managed through your WordPress account settings for now.</p></div>';
+        return '<div class="ls-profile"><h3>Commander Profile</h3><form class="ls-auth-form" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_profile"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_profile', 'ls_nonce', true, false) . '<label>Public commander name<input required minlength="3" maxlength="60" name="ls_commander_name" value="' . esc_attr($name) . '"></label><button class="ls-button" type="submit">Save profile</button></form></div>';
+    }
+    public static function commander_name(int $id): string {
+        $name = trim((string)get_user_meta($id, 'ls_commander_name', true));
+        if ($name !== '') { return $name; }
+        $user = get_userdata($id);
+        return $user ? (string)$user->display_name : '';
+    }
+    public static function account_form(string $return): string {
+        $user = wp_get_current_user();
+        $public = get_user_meta((int)$user->ID, 'ls_profile_discoverable', true) === '1';
+        $hidden = '<input type="hidden" name="action" value="ls_account"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_account', 'ls_nonce', true, false);
+        return '<div class="ls-profile ls-account"><h3>Account &amp; Privacy</h3><form class="ls-auth-form" method="post" action="' . esc_url(admin_url('admin-post.php')) . '">' . $hidden
+            . '<label>Email address<input type="email" name="ls_new_email" value="' . esc_attr($user->user_email) . '" required autocomplete="email"></label><p class="ls-muted">Changing your email requires confirmation at the new address.</p>'
+            . '<label class="ls-check"><input type="checkbox" name="ls_discoverable" value="1" ' . checked($public, true, false) . '> Allow other commanders to find me for future opponent invitations</label>'
+            . '<h4>Change password (optional)</h4><label>Current password<input type="password" name="ls_current_password" autocomplete="current-password"></label><label>New password (minimum 12 characters)<input type="password" name="ls_new_password" minlength="12" autocomplete="new-password"></label><button class="ls-button" type="submit">Save account settings</button></form></div>';
+    }
+    public static function account(): void {
+        $url = self::return_url();
+        if (!self::verify('account') || !is_user_logged_in()) { self::redirect('expired', $url); }
+        $id = get_current_user_id();
+        $user = get_userdata($id);
+        if (!$user) { self::redirect('expired', $url); }
+        $current = isset($_POST['ls_current_password']) && is_string($_POST['ls_current_password']) ? wp_unslash($_POST['ls_current_password']) : '';
+        $new = isset($_POST['ls_new_password']) && is_string($_POST['ls_new_password']) ? wp_unslash($_POST['ls_new_password']) : '';
+        $email = isset($_POST['ls_new_email']) ? sanitize_email(wp_unslash($_POST['ls_new_email'])) : '';
+        if (!is_email($email)) { self::redirect('email_unavailable', $url); }
+        $owner = email_exists($email);
+        if ($owner && (int)$owner !== $id) { self::redirect('email_unavailable', $url); }
+        if ($current !== '' || $new !== '') {
+            if (strlen($new) < 12 || strlen($new) > 4096 || !wp_check_password($current, $user->user_pass, $id)) { self::redirect('password_invalid', $url); }
+        }
+        update_user_meta($id, 'ls_profile_discoverable', !empty($_POST['ls_discoverable']) ? '1' : '0');
+        if (strcasecmp($email, $user->user_email) !== 0) {
+            $token = bin2hex(random_bytes(32));
+            update_user_meta($id, 'ls_pending_email', $email);
+            update_user_meta($id, 'ls_email_change_hash', wp_hash_password($token));
+            update_user_meta($id, 'ls_email_change_expires', time() + DAY_IN_SECONDS);
+            $link = add_query_arg(array('ls_email_confirm' => $id, 'ls_email_token' => $token), $url);
+            wp_mail($email, 'Confirm your Legion Strategium email change', "Confirm your new email address within 24 hours:\n" . $link . "\n\nIf you did not request this, ignore this message.");
+        }
+        if ($new !== '') {
+            wp_set_password($new, $id);
+            wp_logout();
+            self::redirect('password_changed', $url);
+        }
+        self::redirect(strcasecmp($email, $user->user_email) !== 0 ? 'email_pending' : 'account_saved', $url);
+    }
+    public static function confirm_email_link(): void {
+        if (!isset($_GET['ls_email_confirm'], $_GET['ls_email_token'])) { return; }
+        $id = absint($_GET['ls_email_confirm']);
+        $token = sanitize_text_field(wp_unslash($_GET['ls_email_token']));
+        $hash = (string)get_user_meta($id, 'ls_email_change_hash', true);
+        $expiry = (int)get_user_meta($id, 'ls_email_change_expires', true);
+        $email = (string)get_user_meta($id, 'ls_pending_email', true);
+        $code = 'email_invalid';
+        $owner = $email ? email_exists($email) : false;
+        if ($id && $hash && $expiry >= time() && strlen($token) === 64 && is_email($email) && (!$owner || (int)$owner === $id) && wp_check_password($token, $hash, $id)) {
+            $result = wp_update_user(array('ID' => $id, 'user_email' => $email));
+            if (!is_wp_error($result)) {
+                delete_user_meta($id, 'ls_pending_email');
+                delete_user_meta($id, 'ls_email_change_hash');
+                delete_user_meta($id, 'ls_email_change_expires');
+                $code = 'email_confirmed';
+            }
+        }
+        wp_safe_redirect(add_query_arg('ls_notice', $code, remove_query_arg(array('ls_email_confirm', 'ls_email_token'))));
+        exit;
     }
     public static function resend_form(string $return): string {
         return '<form class="ls-auth-form ls-resend" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_resend"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_resend', 'ls_nonce', true, false) . '<label>Resend verification email<input type="email" name="ls_email" required autocomplete="email"></label><button class="ls-button ls-secondary" type="submit">Resend verification</button></form>';

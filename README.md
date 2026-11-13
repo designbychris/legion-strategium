@@ -43,3 +43,7 @@ No Games Workshop rule text, artwork, stats or points data are bundled. Confirm 
 ## Phase I.3 — Commander Identity
 
 New registrations require email verification. Verification links expire after 24 hours; resend is available on the login screen. Pre-existing WordPress accounts remain eligible to sign in. Registration and resend requests are throttled per IP using WordPress transients; add an edge/WAF anti-bot solution before high-traffic public launch. Logged-in users can set a public commander name. Email and password management remain in WordPress for now. Ensure WordPress transactional email delivery works before enabling public registrations.
+
+## Phase I.4 — The Commander's Seal
+
+The dashboard greeting now uses the public commander name (falling back to the WordPress display name). Commander account settings include a discoverability opt-in (off by default), verified email changes (24-hour token delivered to the new address), and password changes requiring the existing password and at least 12 characters. Changing a password ends the current login session. Email-change tokens are single-use; the current address remains in effect until confirmation. Public opponent search is not yet implemented. Before opening public registration broadly, add stronger anti-bot controls, email-delivery monitoring, and WordPress integration tests.
