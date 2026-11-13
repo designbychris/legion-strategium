@@ -9,3 +9,8 @@
 
 /* Phase II.1 — Armoury catalogue */
 .ls-catalogue{margin:2rem 0;padding:1.5rem;border:1px solid #62513a;border-radius:9px;background:#29251f}.ls-catalogue h3,.ls-catalogue h4,.ls-catalogue h5{color:#c9a052}.ls-unit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem}.ls-unit{display:flex;flex-direction:column;gap:.4rem;padding:1rem;border:1px solid #62513a;border-radius:8px;background:#39332b;color:#e8dcc3}.ls-unit strong{color:#c9a052}.ls-unit span{font-size:.85rem;color:#bdb09b}.ls-unit b{margin-top:.5rem;color:#e8dcc3}
+/* Structured unit characteristics */
+.ls-unit-profile {display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin:12px 0 0;}
+.ls-unit-profile>div {border:1px solid rgba(201,160,82,.35);border-radius:4px;padding:7px;}
+.ls-unit-profile dt {font-size:.72rem;opacity:.8;}
+.ls-unit-profile dd {margin:3px 0 0;font-weight:700;color:#c9a052;}

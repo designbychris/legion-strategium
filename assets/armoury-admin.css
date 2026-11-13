@@ -1,0 +1,16 @@
+.ls-armoury-admin {max-width: 1500px;}
+.ls-armoury-admin h1 {color:#29251f; margin: 20px 0 10px;}
+.ls-armoury-admin h2 {border-bottom:1px solid #c9a052; padding: 14px 0 9px; margin-top:28px;}
+.ls-armoury-admin input[type=text], .ls-armoury-admin input:not([type]), .ls-armoury-admin select {max-width:100%;min-height:34px;}
+.ls-armoury-admin .widefat td {vertical-align:top;}
+.ls-armoury-admin .widefat form {margin:0 0 9px;}
+.ls-armoury-admin .widefat form label {display:inline-flex;align-items:center;gap:5px;margin:4px 6px 4px 0;}
+.ls-armoury-admin .widefat form input {max-width:190px;}
+.ls-armoury-admin .widefat form select {max-width:230px;}
+.ls-armoury-admin .ls-profile-fields {background:#f9f7f2;border:1px solid #d7c9a9;padding:12px;margin:12px 0;}
+.ls-armoury-admin .ls-profile-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:10px;}
+.ls-armoury-admin .ls-profile-grid label {display:flex;flex-direction:column;align-items:stretch;gap:3px;}
+.ls-armoury-admin .ls-profile-grid input {width:100%;max-width:none;}
+.ls-armoury-admin .ls-release-row {display:flex;align-items:center;flex-wrap:wrap;gap:15px;background:#fff;border-left:3px solid #c9a052;padding:12px;margin-bottom:7px;}
+.ls-armoury-admin .ls-release-row form {margin:0 0 0 auto;}
+@media(max-width:782px){.ls-armoury-admin .widefat {display:block;overflow-x:auto;}.ls-armoury-admin .ls-release-row form{margin-left:0;}}

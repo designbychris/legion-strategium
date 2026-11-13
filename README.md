@@ -63,3 +63,7 @@ releases are drafts and are not yet a formally published rules catalogue.
 
 ## Phase II.2 — Draft catalogue corrections
 Draft factions and units now have inline editing and deletion controls in the WordPress Armoury. Units can be reassigned to another faction in the same release. Published releases and releases already referenced by saved armies are locked against these edits/deletions. Factions with units cannot be deleted. This is an initial management pass; structured characteristics, release publication and full archive workflows remain future work.
+
+
+## Phase II.2B — The Armoury Takes Shape
+Draft units support editable structured characteristics stored inside the existing JSON data field (no migration). Administrators can publish a nonempty draft release after verifying faction relationships. Publishing is irreversible through the UI; published catalogue records are locked. Future corrections should be made in a new release (release cloning is not yet implemented). The public catalogue remains a preview, including drafts, until the published-only catalogue phase.

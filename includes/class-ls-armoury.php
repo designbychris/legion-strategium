@@ -5,7 +5,54 @@ final class LS_Armoury {
     public static function boot(): void {
         add_action('admin_post_ls_armoury_save', array(__CLASS__, 'save'));
         add_action('admin_post_ls_armoury_manage', array(__CLASS__, 'manage'));
+        add_action('admin_post_ls_armoury_publish', array(__CLASS__, 'publish'));
+        add_action('admin_enqueue_scripts', array(__CLASS__, 'admin_assets'));
     }
+    public static function admin_assets(string $hook): void {
+        if ($hook === 'toplevel_page_legion-strategium') {
+            wp_enqueue_style('ls-armoury-admin', LS_URL . 'assets/armoury-admin.css', array(), LS_VERSION);
+        }
+    }
+
+    /** Parse a structured, edition-neutral profile without discarding existing unit data. */
+    public static function profile_fields(): array {
+        return array('movement'=>'Movement', 'weapon_skill'=>'Weapon Skill', 'ballistic_skill'=>'Ballistic Skill',
+            'strength'=>'Strength', 'toughness'=>'Toughness', 'wounds'=>'Wounds', 'initiative'=>'Initiative',
+            'attacks'=>'Attacks', 'leadership'=>'Leadership', 'save'=>'Save');
+    }
+
+    public static function sanitise_profile(array $input): array {
+        $profile = array();
+        foreach (self::profile_fields() as $key => $label) {
+            if (!isset($input[$key]) || !is_scalar($input[$key])) { continue; }
+            $value = trim((string)$input[$key]);
+            if ($value === '') { continue; }
+            if (strlen($value) > 32 || !preg_match('/^[a-zA-Z0-9+\-*\/ .]+$/', $value)) { continue; }
+            $profile[$key] = $value;
+        }
+        return $profile;
+    }
+
+    /** Publishing is one-way. Further rules changes require a separate draft release. */
+    public static function publish(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_armoury_publish');
+        $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
+        global $wpdb;
+        $notice = 'invalid';
+        if ($id && self::release_is_draft($id)) {
+            $faction_count = (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('factions') . ' WHERE release_id = %d', $id));
+            $unit_count = (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('units') . ' WHERE release_id = %d', $id));
+            $invalid_units = (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('units') . ' u LEFT JOIN ' . LS_Schema::table('factions') . ' f ON u.faction_id = f.id AND u.release_id = f.release_id WHERE u.release_id = %d AND f.id IS NULL', $id));
+            if ($faction_count > 0 && $unit_count > 0 && $invalid_units === 0) {
+                $updated = $wpdb->update(LS_Schema::table('releases'), array('status'=>'published','published_at'=>current_time('mysql')), array('id'=>$id,'status'=>'draft'), array('%s','%s'), array('%d','%s'));
+                $notice = $updated === 1 ? 'published' : 'invalid';
+            }
+        }
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php')));
+        exit;
+    }
+
     public static function rows(string $table, string $where = '', array $args = array()): array {
         global $wpdb;
         $sql = 'SELECT * FROM ' . LS_Schema::table($table) . ($where ? ' WHERE ' . $where : '') . ' ORDER BY id DESC';
@@ -74,6 +121,8 @@ final class LS_Armoury {
                                 if (!is_array($data)) { $data = array(); }
                                 $data['role'] = $role;
                                 $data['base_points'] = $points;
+                                $profile_input = isset($_POST['ls_profile']) && is_array($_POST['ls_profile']) ? wp_unslash($_POST['ls_profile']) : array();
+                                $data['profile'] = self::sanitise_profile($profile_input);
                                 $values['faction_id'] = $faction;
                                 $values['data'] = wp_json_encode($data);
                                 $formats = array('%s','%s','%d','%s');
@@ -114,6 +163,14 @@ final class LS_Armoury {
             }
             $form .= '</select></label> <label>Role <input name="ls_role" value="' . esc_attr((string)($data['role'] ?? '')) . '"></label> <label>Points <input type="number" min="0" max="100000" required name="ls_points" value="' . esc_attr((string)($data['base_points'] ?? 0)) . '"></label> ';
         }
+        if ($kind === 'unit') {
+            $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
+            $form .= '<div class="ls-profile-fields"><strong>Characteristics</strong><div class="ls-profile-grid">';
+            foreach (self::profile_fields() as $key => $label) {
+                $form .= '<label>' . esc_html($label) . '<input maxlength="32" name="ls_profile[' . esc_attr($key) . ']" value="' . esc_attr((string)($profile[$key] ?? '')) . '" placeholder="—"></label>';
+            }
+            $form .= '</div></div>';
+        }
         $form .= '<button class="button button-primary" type="submit">Save changes</button></form>';
         $form .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Permanently delete this draft record?&quot;);">' . $base . '<input type="hidden" name="ls_operation" value="delete"><button type="submit" class="button button-link-delete">Delete draft ' . esc_html($kind) . '</button></form>';
         return $form;
@@ -137,15 +194,28 @@ final class LS_Armoury {
     public static function admin(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
-        echo '<div class="wrap"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
         echo '<h2>1. Editions</h2>' . self::form('edition', '<p><label>Title <input required name="ls_title" placeholder="Horus Heresy Third Edition"></label> <label>Slug <input name="ls_slug" placeholder="hh-3"></label></p>');
         echo '<h2>2. Ruleset Releases</h2>' . self::form('release', '<p><label>Edition <select name="ls_edition" required>' . self::options($editions) . '</select></label> <label>Version <input required name="ls_version" placeholder="2026-draft-1"></label></p>');
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
         echo '<h2>4. Units</h2><p>Choose a faction belonging to the selected release. Mismatched relationships are rejected.</p>' . self::form('unit', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Faction <select name="ls_faction" required>' . self::options($factions) . '</select></label></p><p><label>Unit <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Role <input name="ls_role" placeholder="Example role"></label> <label>Base points <input type="number" name="ls_points" min="0" max="100000" value="0" required></label></p>');
+        echo '<h2>Release publication</h2><p>Publishing permanently locks this release. Check all factions, units and points first. A release must contain at least one faction and unit.</p>';
+        foreach ($releases as $release) {
+            $edition_title = 'Unknown edition';
+            foreach ($editions as $edition) { if ((int)$edition->id === (int)$release->edition_id) { $edition_title = $edition->title; break; } }
+            echo '<div class="ls-release-row"><strong>' . esc_html($edition_title . ' — ' . $release->version) . '</strong> <span>' . esc_html($release->status) . '</span>';
+            if ($release->status === 'draft') {
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Publish and permanently lock this release?&quot;);"><input type="hidden" name="action" value="ls_armoury_publish"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_publish', '_wpnonce', true, false) . '<button class="button button-secondary">Publish release</button></form>';
+            }
+            echo '</div>';
+        }
+        $edition_names = array(); foreach ($editions as $e) { $edition_names[(int)$e->id] = $e->title; }
+        $release_names = array(); foreach ($releases as $r) { $release_names[(int)$r->id] = $r->version; }
+        $faction_names = array(); foreach ($factions as $f) { $faction_names[(int)$f->id] = $f->title; }
         foreach (array('editions'=>$editions,'releases'=>$releases,'factions'=>$factions,'units'=>$units) as $name=>$records) {
             echo '<h2>' . esc_html(ucfirst($name)) . ' (' . count($records) . ')</h2><table class="widefat striped"><thead><tr><th>ID</th><th>Name / Version</th><th>Parent</th><th>Manage draft records</th></tr></thead><tbody>';
-            foreach ($records as $row) { echo '<tr><td>' . (int)$row->id . '</td><td>' . esc_html((string)($row->title ?? $row->version ?? '')) . '</td><td>' . esc_html((string)($row->release_id ?? $row->edition_id ?? '—')) . '</td><td>' . (in_array($name, array('units','factions'), true) ? self::manage_form($name === 'units' ? 'unit' : 'faction', $row, $factions) : '—') . '</td></tr>'; }
+            foreach ($records as $row) { echo '<tr><td>' . (int)$row->id . '</td><td>' . esc_html((string)($row->title ?? $row->version ?? '')) . '</td><td>' . esc_html($name === 'units' ? ($faction_names[(int)$row->faction_id] ?? 'Unknown faction') : ($name === 'factions' ? ($release_names[(int)$row->release_id] ?? 'Unknown release') : ($name === 'releases' ? ($edition_names[(int)$row->edition_id] ?? 'Unknown edition') : '—'))) . '</td><td>' . (in_array($name, array('units','factions'), true) ? self::manage_form($name === 'units' ? 'unit' : 'faction', $row, $factions) : '—') . '</td></tr>'; }
             echo '</tbody></table>';
         }
         echo '</div>';
@@ -164,7 +234,10 @@ final class LS_Armoury {
                 foreach ($units as $unit) {
                     if ((int)$unit->release_id !== (int)$release->id || !isset($faction_ids[(int)$unit->faction_id]) || (int)$faction_ids[(int)$unit->faction_id]->release_id !== (int)$release->id) { continue; }
                     $data = json_decode((string)$unit->data, true); $data = is_array($data) ? $data : array();
-                    $html .= '<article class="ls-unit"><strong>' . esc_html($unit->title) . '</strong><span>' . esc_html($faction_ids[(int)$unit->faction_id]->title) . '</span><span>' . esc_html((string)($data['role'] ?? 'Unassigned')) . '</span><b>' . esc_html((string)($data['base_points'] ?? '—')) . ' pts</b></article>';
+                    $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
+                    $html .= '<article class="ls-unit"><strong>' . esc_html($unit->title) . '</strong><span>' . esc_html($faction_ids[(int)$unit->faction_id]->title) . '</span><span>' . esc_html((string)($data['role'] ?? 'Unassigned')) . '</span><b>' . esc_html((string)($data['base_points'] ?? '—')) . ' pts</b>';
+                    if ($profile) { $html .= '<dl class="ls-unit-profile">'; foreach (self::profile_fields() as $key => $label) { if (isset($profile[$key])) { $html .= '<div><dt>' . esc_html($label) . '</dt><dd>' . esc_html((string)$profile[$key]) . '</dd></div>'; } } $html .= '</dl>'; }
+                    $html .= '</article>';
                 }
                 $html .= '</div>';
             }
