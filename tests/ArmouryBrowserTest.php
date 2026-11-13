@@ -1,5 +1,11 @@
 <?php
 use PHPUnit\Framework\TestCase;
+// This structural test runs without bootstrapping WordPress.
+if (!function_exists('absint')) {
+    function absint($value): int {
+        return abs((int) $value);
+    }
+}
 require_once dirname(__DIR__) . '/includes/class-ls-armoury.php';
 final class ArmouryBrowserTest extends TestCase {
     public function test_browse_context_whitelists_numeric_filters(): void {
