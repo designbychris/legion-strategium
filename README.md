@@ -59,3 +59,7 @@ This first pass is deliberately **create-only**. Editing, publishing releases, d
 full statlines, wargear and detachment validation are planned for later phases. Do not
 enter copyrighted official game data without appropriate rights. All newly created
 releases are drafts and are not yet a formally published rules catalogue.
+
+
+## Phase II.2 — Draft catalogue corrections
+Draft factions and units now have inline editing and deletion controls in the WordPress Armoury. Units can be reassigned to another faction in the same release. Published releases and releases already referenced by saved armies are locked against these edits/deletions. Factions with units cannot be deleted. This is an initial management pass; structured characteristics, release publication and full archive workflows remain future work.
