@@ -50,7 +50,9 @@ final class LS_Armoury {
                 $notice = $updated === 1 ? 'published' : 'invalid';
             }
         }
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php')));
+        $context = self::browse_context($_POST);
+        if ($kind === 'unit' && $operation === 'edit' && $notice === 'updated') { $context['ls_edit_unit'] = $id; }
+        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
 
@@ -61,7 +63,9 @@ final class LS_Armoury {
         $source = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
         $version = isset($_POST['ls_version']) ? sanitize_text_field(wp_unslash($_POST['ls_version'])) : '';
         $notice = self::clone_release_data($source, $version) ? 'cloned' : 'clone_failed';
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php')));
+        $context = self::browse_context($_POST);
+        if ($kind === 'unit' && $operation === 'edit' && $notice === 'updated') { $context['ls_edit_unit'] = $id; }
+        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
 
@@ -185,7 +189,9 @@ final class LS_Armoury {
                 }
             }
         }
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php')));
+        $context = self::browse_context($_POST);
+        if ($kind === 'unit' && $operation === 'edit' && $notice === 'updated') { $context['ls_edit_unit'] = $id; }
+        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
     public static function release_is_draft(int $id): bool {
@@ -240,6 +246,27 @@ final class LS_Armoury {
     private static function form(string $kind, string $fields): string {
         return '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_armoury_save"><input type="hidden" name="ls_kind" value="' . esc_attr($kind) . '">' . wp_nonce_field('ls_armoury_save', '_wpnonce', true, false) . $fields . '<p><button class="button button-primary">Add ' . esc_html(ucfirst($kind)) . '</button></p></form>';
     }
+    /** Whitelist browsing parameters so editor redirects cannot carry arbitrary URLs. */
+    public static function browse_context(array $source): array {
+        $result = array();
+        foreach (array('ls_edition','ls_release','ls_faction','ls_page') as $key) {
+            if (isset($source[$key])) { $result[$key] = absint($source[$key]); }
+        }
+        if (isset($source['ls_search'])) {
+            $result['ls_search'] = substr(sanitize_text_field(wp_unslash($source['ls_search'])), 0, 100);
+        }
+        return $result;
+    }
+    private static function filter_options(array $rows, string $label, int $selected, string $empty): string {
+        $html = '<option value="0">' . esc_html($empty) . '</option>';
+        foreach ($rows as $row) {
+            $html .= '<option value="' . (int)$row->id . '" ' . selected($selected, (int)$row->id, false) . '>' . esc_html((string)$row->$label) . '</option>';
+        }
+        return $html;
+    }
+    private static function browse_url(array $context): string {
+        return add_query_arg(array_merge(array('page'=>'legion-strategium'), $context), admin_url('admin.php'));
+    }
     public static function admin(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
@@ -263,11 +290,66 @@ final class LS_Armoury {
         $edition_names = array(); foreach ($editions as $e) { $edition_names[(int)$e->id] = $e->title; }
         $release_names = array(); foreach ($releases as $r) { $release_names[(int)$r->id] = $r->version; }
         $faction_names = array(); foreach ($factions as $f) { $faction_names[(int)$f->id] = $f->title; }
-        foreach (array('editions'=>$editions,'releases'=>$releases,'factions'=>$factions,'units'=>$units) as $name=>$records) {
-            echo '<h2>' . esc_html(ucfirst($name)) . ' (' . count($records) . ')</h2><table class="widefat striped"><thead><tr><th>ID</th><th>Name / Version</th><th>Parent</th><th>Manage draft records</th></tr></thead><tbody>';
-            foreach ($records as $row) { echo '<tr><td>' . (int)$row->id . '</td><td>' . esc_html((string)($row->title ?? $row->version ?? '')) . '</td><td>' . esc_html($name === 'units' ? ($faction_names[(int)$row->faction_id] ?? 'Unknown faction') : ($name === 'factions' ? ($release_names[(int)$row->release_id] ?? 'Unknown release') : ($name === 'releases' ? ($edition_names[(int)$row->edition_id] ?? 'Unknown edition') : '—'))) . '</td><td>' . (in_array($name, array('units','factions'), true) ? self::manage_form($name === 'units' ? 'unit' : 'faction', $row, $factions) : '—') . '</td></tr>'; }
-            echo '</tbody></table>';
+        // Keep the release catalogue scoped before rendering any unit editor.
+        $context = self::browse_context($_GET);
+        $edition_id = (int)($context['ls_edition'] ?? 0);
+        $release_id = (int)($context['ls_release'] ?? 0);
+        $faction_id = (int)($context['ls_faction'] ?? 0);
+        $search = (string)($context['ls_search'] ?? '');
+        $page = max(1, (int)($context['ls_page'] ?? 1));
+        $visible_releases = array_values(array_filter($releases, static function ($r) use ($edition_id) { return !$edition_id || (int)$r->edition_id === $edition_id; }));
+        if ($release_id && !array_filter($visible_releases, static function ($r) use ($release_id) { return (int)$r->id === $release_id; })) { $release_id = 0; }
+        $visible_factions = array_values(array_filter($factions, static function ($f) use ($release_id, $visible_releases) {
+            if ($release_id) { return (int)$f->release_id === $release_id; }
+            foreach ($visible_releases as $r) { if ((int)$r->id === (int)$f->release_id) { return true; } }
+            return false;
+        }));
+        if ($faction_id && !array_filter($visible_factions, static function ($f) use ($faction_id) { return (int)$f->id === $faction_id; })) { $faction_id = 0; }
+        $visible_units = array_values(array_filter($units, static function ($u) use ($visible_factions, $release_id, $faction_id, $search) {
+            if ($release_id && (int)$u->release_id !== $release_id) { return false; }
+            if ($faction_id && (int)$u->faction_id !== $faction_id) { return false; }
+            if ($search !== '' && stripos((string)$u->title, $search) === false && stripos((string)$u->slug, $search) === false) { return false; }
+            foreach ($visible_factions as $f) { if ((int)$f->id === (int)$u->faction_id && (int)$f->release_id === (int)$u->release_id) { return true; } }
+            return false;
+        }));
+        echo '<h2 id="ls-catalogue">Catalogue browser</h2><form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="ls-catalogue-filters">';
+        echo '<input type="hidden" name="page" value="legion-strategium"><label>Edition <select name="ls_edition">' . self::filter_options($editions, 'title', $edition_id, 'All editions') . '</select></label>';
+        echo '<label>Release <select name="ls_release">' . self::filter_options($visible_releases, 'version', $release_id, 'All releases') . '</select></label>';
+        echo '<label>Faction <select name="ls_faction">' . self::filter_options($visible_factions, 'title', $faction_id, 'All factions') . '</select></label>';
+        echo '<label>Search units <input type="search" name="ls_search" value="' . esc_attr($search) . '" placeholder="Unit name or slug"></label><button class="button button-primary">Filter catalogue</button> <a class="button" href="' . esc_url(self::browse_url(array())) . '#ls-catalogue">Clear</a></form>';
+        echo '<p class="description">Choose an edition, then filter by release and faction. Apply filters to refresh dependent choices.</p>';
+        $selected_edit = isset($_GET['ls_edit_unit']) ? absint($_GET['ls_edit_unit']) : 0;
+        $editing = null;
+        foreach ($visible_units as $u) { if ((int)$u->id === $selected_edit) { $editing = $u; break; } }
+        if ($editing) {
+            echo '<section class="ls-datasheet-editor"><h2>Editing: ' . esc_html($editing->title) . '</h2><p><a href="' . esc_url(self::browse_url($context)) . '#ls-catalogue">&larr; Back to catalogue</a></p>';
+            $editor = self::manage_form('unit', $editing, $factions);
+            $hidden = '';
+            foreach ($context as $key=>$value) { $hidden .= '<input type="hidden" name="' . esc_attr($key) . '" value="' . esc_attr((string)$value) . '">'; }
+            // Every form, including delete, retains its browsing context.
+            $editor = str_replace('<input type="hidden" name="ls_operation"', $hidden . '<input type="hidden" name="ls_operation"', $editor);
+            echo $editor . '</section>';
         }
+        echo '<h2>Units (' . count($visible_units) . ' matching)</h2><table class="widefat striped ls-unit-list"><thead><tr><th>Unit</th><th>Faction</th><th>Release</th><th>Actions</th></tr></thead><tbody>';
+        $per_page = 25;
+        $pages = max(1, (int)ceil(count($visible_units) / $per_page));
+        $page = min($page, $pages);
+        foreach (array_slice($visible_units, ($page - 1) * $per_page, $per_page) as $u) {
+            $link = self::browse_url(array_merge($context, array('ls_edit_unit'=>(int)$u->id)));
+            echo '<tr><td>' . esc_html($u->title) . '</td><td>' . esc_html($faction_names[(int)$u->faction_id] ?? 'Unknown faction') . '</td><td>' . esc_html($release_names[(int)$u->release_id] ?? 'Unknown release') . '</td><td><a class="button" href="' . esc_url($link . '#ls-catalogue') . '">View / Edit datasheet</a></td></tr>';
+        }
+        if (!$visible_units) { echo '<tr><td colspan="4">No units match these filters.</td></tr>'; }
+        echo '</tbody></table><nav class="ls-pagination" aria-label="Unit pages">';
+        for ($i=1; $i<=$pages; $i++) {
+            echo '<a class="button ' . ($i === $page ? 'button-primary' : '') . '" href="' . esc_url(self::browse_url(array_merge($context, array('ls_page'=>$i))) . '#ls-catalogue') . '">' . $i . '</a> ';
+        }
+        echo '</nav>';
+        // Keep faction management available but limit it to the selected catalogue.
+        echo '<h2>Factions (' . count($visible_factions) . ')</h2><table class="widefat striped"><thead><tr><th>Faction</th><th>Release</th><th>Manage draft</th></tr></thead><tbody>';
+        foreach ($visible_factions as $f) {
+            echo '<tr><td>' . esc_html($f->title) . '</td><td>' . esc_html($release_names[(int)$f->release_id] ?? 'Unknown release') . '</td><td>' . self::manage_form('faction', $f, $factions) . '</td></tr>';
+        }
+        echo '</tbody></table>';
         echo '</div>';
     }
     public static function catalogue(): string {

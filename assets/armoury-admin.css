@@ -14,3 +14,11 @@
 .ls-armoury-admin .ls-release-row {display:flex;align-items:center;flex-wrap:wrap;gap:15px;background:#fff;border-left:3px solid #c9a052;padding:12px;margin-bottom:7px;}
 .ls-armoury-admin .ls-release-row form {margin:0 0 0 auto;}
 @media(max-width:782px){.ls-armoury-admin .widefat {display:block;overflow-x:auto;}.ls-armoury-admin .ls-release-row form{margin-left:0;}}
+
+.ls-armoury-admin .ls-catalogue-filters {display:flex;flex-wrap:wrap;align-items:end;gap:12px;background:#fff;border:1px solid #d7c9a9;padding:16px;}
+.ls-armoury-admin .ls-catalogue-filters label {display:flex;flex-direction:column;gap:5px;min-width:170px;}
+.ls-armoury-admin .ls-catalogue-filters select {width:100%;max-width:320px;}
+.ls-armoury-admin .ls-datasheet-editor {background:#fff;border-left:4px solid #c9a052;padding:16px;margin:18px 0;}
+.ls-armoury-admin .ls-datasheet-editor form {margin-bottom:14px;}
+.ls-armoury-admin .ls-unit-list td {vertical-align:middle;}
+.ls-armoury-admin .ls-pagination {margin:14px 0;display:flex;gap:6px;flex-wrap:wrap;}
