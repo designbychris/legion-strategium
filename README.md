@@ -47,3 +47,15 @@ New registrations require email verification. Verification links expire after 24
 ## Phase I.4 — The Commander's Seal
 
 The dashboard greeting now uses the public commander name (falling back to the WordPress display name). Commander account settings include a discoverability opt-in (off by default), verified email changes (24-hour token delivered to the new address), and password changes requiring the existing password and at least 12 characters. Changing a password ends the current login session. Email-change tokens are single-use; the current address remains in effect until confirmation. Public opponent search is not yet implemented. Before opening public registration broadly, add stronger anti-bot controls, email-delivery monitoring, and WordPress integration tests.
+
+## Phase II.1 — The Armoury Opens
+
+The WordPress **Strategium** admin screen now provides draft edition, release, faction,
+and unit creation. Add records in that order. Unit records include a sample battlefield
+role and nonnegative base points. The frontend `[legion_strategium]` shortcode displays
+a read-only, release-grouped catalogue to signed-in commanders.
+
+This first pass is deliberately **create-only**. Editing, publishing releases, deletion,
+full statlines, wargear and detachment validation are planned for later phases. Do not
+enter copyrighted official game data without appropriate rights. All newly created
+releases are drafts and are not yet a formally published rules catalogue.

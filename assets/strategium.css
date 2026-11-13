@@ -6,3 +6,6 @@
 
 /* Phase I.4 — Account settings and accessible controls */
 .ls-account{max-width:600px}.ls-account h4{color:#c9a052;margin:1rem 0 0}.ls-account .ls-check{display:flex;align-items:flex-start;gap:.65rem;line-height:1.5}.ls-account .ls-check input{margin-top:.3rem;accent-color:#c9a052;flex-shrink:0}.ls-account .ls-muted{margin:0}.ls-profile .ls-button{background:#c9a052!important;color:#201d19!important;opacity:1!important}.ls-profile .ls-button:hover{background:#e8dcc3!important}.ls-profile .ls-button:disabled{opacity:.6!important}
+
+/* Phase II.1 — Armoury catalogue */
+.ls-catalogue{margin:2rem 0;padding:1.5rem;border:1px solid #62513a;border-radius:9px;background:#29251f}.ls-catalogue h3,.ls-catalogue h4,.ls-catalogue h5{color:#c9a052}.ls-unit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem}.ls-unit{display:flex;flex-direction:column;gap:.4rem;padding:1rem;border:1px solid #62513a;border-radius:8px;background:#39332b;color:#e8dcc3}.ls-unit strong{color:#c9a052}.ls-unit span{font-size:.85rem;color:#bdb09b}.ls-unit b{margin-top:.5rem;color:#e8dcc3}
