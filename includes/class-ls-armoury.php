@@ -73,6 +73,42 @@ final class LS_Armoury {
         return $result;
     }
 
+    /** Release-local, reusable equipment. Slugs survive release cloning. */
+    public static function sanitise_equipment($input): array {
+        if (!is_array($input)) { return array(); }
+        $type = isset($input['type']) && is_scalar($input['type']) ? (string)$input['type'] : 'equipment';
+        if (!in_array($type, array('ranged','melee','equipment'), true)) { $type = 'equipment'; }
+        $result = array('type'=>$type, 'profile'=>array(), 'rules'=>array());
+        foreach (array('range','strength','ap','damage','attacks','special') as $key) {
+            if (!isset($input[$key]) || !is_scalar($input[$key])) { continue; }
+            $value = trim((string)$input[$key]);
+            if ($value !== '' && strlen($value) <= 80 && preg_match('/^[\p{L}\p{N} +*\/.,():\x27-]+$/u', $value)) { $result['profile'][$key] = $value; }
+        }
+        if (isset($input['rules']) && is_scalar($input['rules'])) {
+            foreach (array_slice(explode(',', (string)$input['rules']), 0, 20) as $rule) {
+                $rule = trim($rule);
+                if ($rule !== '' && strlen($rule) <= 100 && preg_match('/^[\p{L}\p{N} \x27()-]+$/u', $rule)) { $result['rules'][] = $rule; }
+            }
+        }
+        return $result;
+    }
+
+    public static function sanitise_equipment_links($input, array $allowed_slugs, array $model_names): array {
+        if (!is_array($input)) { return array(); }
+        $allowed = array_fill_keys($allowed_slugs, true);
+        $models = array_fill_keys($model_names, true);
+        $result = array();
+        foreach (array_slice($input, 0, 40) as $entry) {
+            if (!is_array($entry)) { continue; }
+            $slug = isset($entry['slug']) && is_scalar($entry['slug']) ? (string)$entry['slug'] : '';
+            $model = isset($entry['model']) && is_scalar($entry['model']) ? (string)$entry['model'] : '';
+            if ($slug === '' || !isset($allowed[$slug]) || ($model !== '' && !isset($models[$model]))) { continue; }
+            $link = array('slug'=>$slug, 'model'=>$model);
+            if (!in_array($link, $result, true)) { $result[] = $link; }
+        }
+        return $result;
+    }
+
     /** Publishing is one-way. Further rules changes require a separate draft release. */
     public static function publish(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
@@ -168,6 +204,9 @@ final class LS_Armoury {
             $result = $wpdb->insert(LS_Schema::table('releases'), array('edition_id'=>$edition,'version'=>$version,'status'=>'draft'), array('%d','%s','%s'));
         } elseif ($kind === 'faction' && $release && $title && $slug && self::exists('releases', $release)) {
             $result = self::release_is_draft($release) ? $wpdb->insert(LS_Schema::table('factions'), array('release_id'=>$release,'slug'=>$slug,'title'=>$title,'data'=>'{}'), array('%d','%s','%s','%s')) : false;
+        } elseif ($kind === 'wargear' && $release && $title && $slug && self::release_is_draft($release) && !self::release_has_armies($release)) {
+            $raw = isset($_POST['ls_equipment']) && is_array($_POST['ls_equipment']) ? wp_unslash($_POST['ls_equipment']) : array();
+            $result = $wpdb->insert(LS_Schema::table('wargear'), array('release_id'=>$release,'slug'=>$slug,'title'=>$title,'data'=>wp_json_encode(self::sanitise_equipment($raw))), array('%d','%s','%s','%s'));
         } elseif ($kind === 'unit' && $release && $faction && $title && $slug && $points !== false && $points >= 0 && $points <= 100000 && self::faction_in_release($faction, $release)) {
             $data = wp_json_encode(array('role'=>$role,'base_points'=>$points));
             $result = self::release_is_draft($release) ? $wpdb->insert(LS_Schema::table('units'), array('release_id'=>$release,'faction_id'=>$faction,'slug'=>$slug,'title'=>$title,'data'=>$data), array('%d','%d','%s','%s','%s')) : false;
@@ -184,8 +223,8 @@ final class LS_Armoury {
         $operation = isset($_POST['ls_operation']) ? sanitize_key(wp_unslash($_POST['ls_operation'])) : '';
         $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
         $notice = 'invalid';
-        if ($id && in_array($kind, array('unit','faction'), true) && in_array($operation, array('edit','delete'), true)) {
-            $table = $kind === 'unit' ? 'units' : 'factions';
+        if ($id && in_array($kind, array('unit','faction','wargear'), true) && in_array($operation, array('edit','delete'), true)) {
+            $table = $kind === 'unit' ? 'units' : ($kind === 'wargear' ? 'wargear' : 'factions');
             $record = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . LS_Schema::table($table) . ' WHERE id = %d', $id));
             if ($record && self::release_is_draft((int)$record->release_id)) {
                 if ($operation === 'delete') {
@@ -200,6 +239,11 @@ final class LS_Armoury {
                     if ($title !== '' && $slug !== '') {
                         $values = array('title'=>$title,'slug'=>$slug);
                         $formats = array('%s','%s');
+                        if ($kind === 'wargear') {
+                            $raw = isset($_POST['ls_equipment']) && is_array($_POST['ls_equipment']) ? wp_unslash($_POST['ls_equipment']) : array();
+                            $values['data'] = wp_json_encode(self::sanitise_equipment($raw));
+                            $formats[] = '%s';
+                        }
                         if ($kind === 'unit') {
                             $faction = isset($_POST['ls_faction']) ? absint($_POST['ls_faction']) : 0;
                             $points = isset($_POST['ls_points']) ? filter_var(wp_unslash($_POST['ls_points']), FILTER_VALIDATE_INT) : false;
@@ -220,6 +264,13 @@ final class LS_Armoury {
                                 if (isset($_POST['ls_composition'])) {
                                     $raw_composition = is_array($_POST['ls_composition']) ? wp_unslash($_POST['ls_composition']) : array();
                                     $data['composition'] = self::sanitise_composition($raw_composition);
+                                }
+                                if (isset($_POST['ls_equipment_links'])) {
+                                    $equipment = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
+                                    $slugs = array_map(static function ($e) { return (string)$e->slug; }, $equipment);
+                                    $names = array_map(static function ($m) { return (string)$m['name']; }, $data['model_profiles'] ?? array());
+                                    $raw_links = is_array($_POST['ls_equipment_links']) ? wp_unslash($_POST['ls_equipment_links']) : array();
+                                    $data['equipment_links'] = self::sanitise_equipment_links($raw_links, $slugs, $names);
                                 }
                                 $values['faction_id'] = $faction;
                                 $values['data'] = wp_json_encode($data);
@@ -263,6 +314,13 @@ final class LS_Armoury {
             }
             $form .= '</select></label> <label>Role <input name="ls_role" value="' . esc_attr((string)($data['role'] ?? '')) . '"></label> <label>Points <input type="number" min="0" max="100000" required name="ls_points" value="' . esc_attr((string)($data['base_points'] ?? 0)) . '"></label> ';
         }
+        if ($kind === 'wargear') {
+            $form .= '<div class="ls-profile-grid"><label>Type <select name="ls_equipment[type]">';
+            foreach (array('equipment'=>'Equipment','ranged'=>'Ranged weapon','melee'=>'Melee weapon') as $value=>$label) { $form .= '<option value="' . esc_attr($value) . '" ' . selected($data['type'] ?? 'equipment', $value, false) . '>' . esc_html($label) . '</option>'; }
+            $form .= '</select></label>';
+            foreach (array('range'=>'Range','strength'=>'Strength','ap'=>'AP','damage'=>'Damage','attacks'=>'Attacks','special'=>'Special') as $key=>$label) { $form .= '<label>' . esc_html($label) . '<input maxlength="80" name="ls_equipment[' . esc_attr($key) . ']" value="' . esc_attr((string)($data['profile'][$key] ?? '')) . '"></label>'; }
+            $form .= '<label>Rule names (comma-separated) <input name="ls_equipment[rules]" value="' . esc_attr(implode(', ', $data['rules'] ?? array())) . '"></label></div>';
+        }
         if ($kind === 'unit') {
             $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
             $form .= '<div class="ls-profile-fields"><strong>Characteristics</strong><div class="ls-profile-grid">';
@@ -289,7 +347,18 @@ final class LS_Armoury {
             foreach (array('minimum_models'=>'Minimum models','maximum_models'=>'Maximum models','starting_models'=>'Starting models','additional_model_points'=>'Additional model points') as $key=>$label) {
                 $form .= '<label>' . esc_html($label) . '<input type="number" min="0" max="100000" name="ls_composition[' . esc_attr($key) . ']" value="' . esc_attr(isset($composition[$key]) ? (string)$composition[$key] : '') . '"></label>';
             }
-            $form .= '</div></details><details class="ls-sheet-panel"><summary>Wargear, rules and options (upcoming)</summary><p>Linked wargear, special rules and configurable upgrades arrive in later phases. Existing data is retained.</p></details>';
+            $form .= '</div></details><details class="ls-sheet-panel"><summary>Wargear and weapon assignments</summary><p>Choose reusable equipment from this ruleset. Assign to the whole unit or one model profile.</p>';
+            $equipment = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
+            $links = isset($data['equipment_links']) && is_array($data['equipment_links']) ? $data['equipment_links'] : array();
+            for ($i=0; $i<max(3, min(40, count($links)+1)); $i++) {
+                $link = $links[$i] ?? array();
+                $form .= '<p><label>Wargear <select name="ls_equipment_links[' . $i . '][slug]"><option value="">— None —</option>';
+                foreach ($equipment as $item) { $form .= '<option value="' . esc_attr($item->slug) . '" ' . selected($link['slug'] ?? '', $item->slug, false) . '>' . esc_html($item->title) . '</option>'; }
+                $form .= '</select></label> <label>Assigned to <select name="ls_equipment_links[' . $i . '][model]"><option value="">Whole unit</option>';
+                foreach ($models as $model) { $name = (string)($model['name'] ?? ''); if ($name !== '') { $form .= '<option value="' . esc_attr($name) . '" ' . selected($link['model'] ?? '', $name, false) . '>' . esc_html($name) . '</option>'; } }
+                $form .= '</select></label></p>';
+            }
+            $form .= '</details><details class="ls-sheet-panel"><summary>Options (upcoming)</summary><p>Conditional upgrades and points adjustments follow in a later phase.</p></details>';
         }
         $form .= '<button class="button button-primary" type="submit">Save changes</button></form>';
         $form .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Permanently delete this draft record?&quot;);">' . $base . '<input type="hidden" name="ls_operation" value="delete"><button type="submit" class="button button-link-delete">Delete draft ' . esc_html($kind) . '</button></form>';
@@ -341,6 +410,7 @@ final class LS_Armoury {
         echo '<h2>2. Ruleset Releases</h2>' . self::form('release', '<p><label>Edition <select name="ls_edition" required>' . self::options($editions) . '</select></label> <label>Version <input required name="ls_version" placeholder="2026-draft-1"></label></p>');
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
         echo '<h2>4. Units</h2><p>Choose a faction belonging to the selected release. Mismatched relationships are rejected.</p>' . self::form('unit', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Faction <select name="ls_faction" required>' . self::options($factions) . '</select></label></p><p><label>Unit <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Role <input name="ls_role" placeholder="Example role"></label> <label>Base points <input type="number" name="ls_points" min="0" max="100000" value="0" required></label></p>');
+        echo '<h2>5. Weapons and Wargear</h2><p>Reusable, release-specific profiles. Create equipment before assigning it to a unit.</p>' . self::form('wargear', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Type <select name="ls_equipment[type]"><option value="equipment">Equipment</option><option value="ranged">Ranged weapon</option><option value="melee">Melee weapon</option></select></label></p><p>Weapon profile values and rules can be edited after creation.</p>');
         echo '<h2>Release publication</h2><p>Publishing permanently locks this release. Check all factions, units and points first. A release must contain at least one faction and unit.</p>';
         foreach ($releases as $release) {
             $edition_title = 'Unknown edition';
@@ -355,6 +425,10 @@ final class LS_Armoury {
         $edition_names = array(); foreach ($editions as $e) { $edition_names[(int)$e->id] = $e->title; }
         $release_names = array(); foreach ($releases as $r) { $release_names[(int)$r->id] = $r->version; }
         $faction_names = array(); foreach ($factions as $f) { $faction_names[(int)$f->id] = $f->title; }
+        $wargear = self::rows('wargear');
+        echo '<h2>Wargear records (' . count($wargear) . ')</h2><p>Equipment records are release-scoped and editable while draft.</p><table class="widefat striped"><thead><tr><th>Name</th><th>Release</th><th>Edit draft equipment</th></tr></thead><tbody>';
+        foreach ($wargear as $item) { echo '<tr><td>' . esc_html($item->title) . '</td><td>' . esc_html($release_names[(int)$item->release_id] ?? 'Unknown') . '</td><td>' . self::manage_form('wargear', $item, array()) . '</td></tr>'; }
+        echo '</tbody></table>';
         // Keep the release catalogue scoped before rendering any unit editor.
         $context = self::browse_context($_GET);
         $edition_id = (int)($context['ls_edition'] ?? 0);
@@ -421,7 +495,8 @@ final class LS_Armoury {
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         $release_ids = array(); foreach ($releases as $release) { $release_ids[(int)$release->id] = $release; }
         $faction_ids = array(); foreach ($factions as $faction) { $faction_ids[(int)$faction->id] = $faction; }
-        $html = '<section class="ls-catalogue"><h3>The Armoury</h3><p class="ls-muted">Read-only catalogue preview. Army creation and validation arrive in later phases.</p>';
+        $equipment_by_release = array(); foreach (self::rows('wargear') as $item) { $equipment_by_release[(int)$item->release_id][(string)$item->slug] = $item; }
+        $html = '<section class="ls-catalogue"> <h3>The Armoury</h3><p class="ls-muted">Read-only catalogue preview. Army creation and validation arrive in later phases.</p>';
         if (!$units) { return $html . '<p>No units have been added yet. Administrators can populate the catalogue from Strategium in WordPress.</p></section>'; }
         foreach ($editions as $edition) {
             $html .= '<h4>' . esc_html($edition->title) . '</h4>';
@@ -434,6 +509,16 @@ final class LS_Armoury {
                     $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
                     $html .= '<article class="ls-unit"><strong>' . esc_html($unit->title) . '</strong><span>' . esc_html($faction_ids[(int)$unit->faction_id]->title) . '</span><span>' . esc_html((string)($data['role'] ?? 'Unassigned')) . '</span><b>' . esc_html((string)($data['base_points'] ?? '—')) . ' pts</b>';
                     if ($profile) { $html .= '<dl class="ls-unit-profile">'; foreach (self::profile_fields() as $key => $label) { if (isset($profile[$key])) { $html .= '<div><dt>' . esc_html($label) . '</dt><dd>' . esc_html((string)$profile[$key]) . '</dd></div>'; } } $html .= '</dl>'; }
+                    if (!empty($data['equipment_links']) && is_array($data['equipment_links'])) {
+                        $html .= '<div class="ls-unit-equipment"><strong>Wargear</strong><ul>';
+                        foreach ($data['equipment_links'] as $link) {
+                            if (!is_array($link)) { continue; }
+                            $item = $equipment_by_release[(int)$release->id][$link['slug'] ?? ''] ?? null;
+                            if (!$item) { continue; }
+                            $html .= '<li>' . esc_html($item->title) . (!empty($link['model']) ? ' — ' . esc_html($link['model']) : '') . '</li>';
+                        }
+                        $html .= '</ul></div>';
+                    }
                     $html .= '</article>';
                 }
                 $html .= '</div>';
