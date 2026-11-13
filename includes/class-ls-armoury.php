@@ -117,6 +117,47 @@ final class LS_Armoury {
         return $result;
     }
 
+    /** Draft-only option definitions; references are restricted to the unit's release. */
+    public static function sanitise_unit_options($input, array $allowed_slugs, array $model_names): array {
+        if (!is_array($input)) { return array(); }
+        $allowed = array_fill_keys($allowed_slugs, true);
+        $models = array_fill_keys($model_names, true);
+        $result = array();
+        foreach (array_slice($input, 0, 30) as $entry) {
+            if (!is_array($entry)) { continue; }
+            $name = isset($entry['name']) && is_scalar($entry['name']) ? trim((string)$entry['name']) : '';
+            $type = isset($entry['type']) && is_scalar($entry['type']) ? (string)$entry['type'] : '';
+            $model = isset($entry['model']) && is_scalar($entry['model']) ? (string)$entry['model'] : '';
+            $from = isset($entry['from']) && is_scalar($entry['from']) ? (string)$entry['from'] : '';
+            $to = isset($entry['to']) && is_scalar($entry['to']) ? (string)$entry['to'] : '';
+            if ($name === '' || strlen($name) > 100 || !preg_match('/^[\p{L}\p{N} .\x27()\/-]+$/u', $name)) { continue; }
+            if (!in_array($type, array('add','replace','model'), true)) { continue; }
+            if ($model !== '' && !isset($models[$model])) { continue; }
+            if ($type === 'model') {
+                if ($model === '' || $from !== '' || $to !== '') { continue; }
+            } elseif (!isset($allowed[$to]) || ($type === 'replace' && !isset($allowed[$from])) || ($type === 'add' && $from !== '')) { continue; }
+            $points = isset($entry['points']) && is_scalar($entry['points']) ? filter_var($entry['points'], FILTER_VALIDATE_INT) : false;
+            $min = isset($entry['min']) && is_scalar($entry['min']) ? filter_var($entry['min'], FILTER_VALIDATE_INT) : false;
+            $max = isset($entry['max']) && is_scalar($entry['max']) ? filter_var($entry['max'], FILTER_VALIDATE_INT) : false;
+            if ($points === false || $points < -100000 || $points > 100000 || $min === false || $max === false || $min < 0 || $max < 1 || $max > 100 || $min > $max) { continue; }
+            $result[] = array('name'=>$name, 'type'=>$type, 'model'=>$model, 'from'=>$from, 'to'=>$to, 'points'=>$points, 'min'=>$min, 'max'=>$max);
+        }
+        return $result;
+    }
+
+    /** Calculate an option subtotal only after validating each selection against its limits. */
+    public static function option_points_total(array $options, array $selections): ?int {
+        $total = 0;
+        foreach ($selections as $index => $quantity) {
+            if (!is_int($index) && !(is_string($index) && ctype_digit($index))) { return null; }
+            if (!isset($options[(int)$index]) || !is_scalar($quantity)) { return null; }
+            $count = filter_var($quantity, FILTER_VALIDATE_INT);
+            if ($count === false || $count < (int)$options[(int)$index]['min'] || $count > (int)$options[(int)$index]['max']) { return null; }
+            $total += $count * (int)$options[(int)$index]['points'];
+        }
+        return $total;
+    }
+
     /** Publishing is one-way. Further rules changes require a separate draft release. */
     public static function publish(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
@@ -280,6 +321,13 @@ final class LS_Armoury {
                                     $raw_links = is_array($_POST['ls_equipment_links']) ? wp_unslash($_POST['ls_equipment_links']) : array();
                                     $data['equipment_links'] = self::sanitise_equipment_links($raw_links, $slugs, $names);
                                 }
+                                if (isset($_POST['ls_unit_options'])) {
+                                    $equipment_for_options = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
+                                    $option_slugs = array_map(static function ($e) { return (string)$e->slug; }, $equipment_for_options);
+                                    $option_models = array_map(static function ($m) { return (string)$m['name']; }, $data['model_profiles'] ?? array());
+                                    $raw_options = is_array($_POST['ls_unit_options']) ? wp_unslash($_POST['ls_unit_options']) : array();
+                                    $data['unit_options'] = self::sanitise_unit_options($raw_options, $option_slugs, $option_models);
+                                }
                                 $values['faction_id'] = $faction;
                                 $values['data'] = wp_json_encode($data);
                                 $formats = array('%s','%s','%d','%s');
@@ -366,7 +414,30 @@ final class LS_Armoury {
                 foreach ($models as $model) { $name = (string)($model['name'] ?? ''); if ($name !== '') { $form .= '<option value="' . esc_attr($name) . '" ' . selected($link['model'] ?? '', $name, false) . '>' . esc_html($name) . '</option>'; } }
                 $form .= '</select></label></p>';
             }
-            $form .= '</details><details class="ls-sheet-panel"><summary>Options (upcoming)</summary><p>Conditional upgrades and points adjustments follow in a later phase.</p></details>';
+            $form .= '</details><details class="ls-sheet-panel"><summary>Upgrade options and points</summary><p class="description">Define optional equipment, equipment exchanges, or additional models. References are limited to this ruleset. Blank names are ignored; maximum 30 options.</p>';
+            $unit_options = isset($data['unit_options']) && is_array($data['unit_options']) ? $data['unit_options'] : array();
+            for ($i=0; $i<max(3, min(30, count($unit_options)+1)); $i++) {
+                $opt = $unit_options[$i] ?? array();
+                $prefix = 'ls_unit_options[' . $i . ']';
+                $form .= '<fieldset class="ls-model-profile"><legend>Option ' . ($i+1) . '</legend><div class="ls-profile-grid">';
+                $form .= '<label>Name <input maxlength="100" name="' . $prefix . '[name]" value="' . esc_attr((string)($opt['name'] ?? '')) . '"></label>';
+                $form .= '<label>Type <select name="' . $prefix . '[type]">';
+                foreach (array('add'=>'Add equipment','replace'=>'Exchange equipment','model'=>'Additional model') as $value=>$label) { $form .= '<option value="' . esc_attr($value) . '" ' . selected($opt['type'] ?? 'add', $value, false) . '>' . esc_html($label) . '</option>'; }
+                $form .= '</select></label><label>Eligible model <select name="' . $prefix . '[model]"><option value="">Whole unit / any model</option>';
+                foreach ($models as $model) { $name = (string)($model['name'] ?? ''); if ($name !== '') { $form .= '<option value="' . esc_attr($name) . '" ' . selected($opt['model'] ?? '', $name, false) . '>' . esc_html($name) . '</option>'; } }
+                $form .= '</select></label>';
+                foreach (array('from'=>'Replace equipment','to'=>'With / add equipment') as $key=>$label) {
+                    $form .= '<label>' . esc_html($label) . ' <select name="' . $prefix . '[' . $key . ']"><option value="">— None —</option>';
+                    foreach ($equipment as $item) { $form .= '<option value="' . esc_attr($item->slug) . '" ' . selected($opt[$key] ?? '', $item->slug, false) . '>' . esc_html($item->title) . '</option>'; }
+                    $form .= '</select></label>';
+                }
+                foreach (array('points'=>'Points adjustment','min'=>'Minimum selections','max'=>'Maximum selections') as $key=>$label) {
+                    $default = $key === 'max' ? '1' : '0';
+                    $form .= '<label>' . esc_html($label) . ' <input type="number" min="' . ($key === 'points' ? '-100000' : ($key === 'max' ? '1' : '0')) . '" max="' . ($key === 'points' ? '100000' : '100') . '" name="' . $prefix . '[' . $key . ']" value="' . esc_attr((string)($opt[$key] ?? $default)) . '"></label>';
+                }
+                $form .= '</div></fieldset>';
+            }
+            $form .= '</details>';
         }
         $form .= '<button class="button button-primary" type="submit">Save changes</button></form>';
         $form .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Permanently delete this draft record?&quot;);">' . $base . '<input type="hidden" name="ls_operation" value="delete"><button type="submit" class="button button-link-delete">Delete draft ' . esc_html($kind) . '</button></form>';
