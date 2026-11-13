@@ -5,7 +5,7 @@ final class CommanderSealTest extends TestCase {
         $plugin = file_get_contents(dirname(__DIR__) . '/includes/class-ls-plugin.php');
         self::assertStringContainsString('LS_Accounts::commander_name((int)$user->ID)', $plugin);
         $accounts = file_get_contents(dirname(__DIR__) . '/includes/class-ls-accounts.php');
-        self::assertStringContainsString("get_user_meta($id, 'ls_commander_name', true)", $accounts);
+        self::assertStringContainsString("get_user_meta(\$id, 'ls_commander_name', true)", $accounts);
     }
     public function test_email_changes_require_confirmation_and_expire(): void {
         $accounts = file_get_contents(dirname(__DIR__) . '/includes/class-ls-accounts.php');
