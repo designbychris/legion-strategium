@@ -6,7 +6,7 @@ final class ArmouryLedgerTest extends TestCase {
         $this->assertStringContainsString("admin_post_ls_armoury_manage", $src);
         $this->assertStringContainsString("check_admin_referer('ls_armoury_manage')", $src);
         $this->assertStringContainsString("current_user_can('manage_options')", $src);
-        $this->assertStringContainsString("self::release_is_draft((int)$record->release_id)", $src);
+        $this->assertStringContainsString('self::release_is_draft((int)$record->release_id)', $src);
     }
     public function test_reassignment_must_match_existing_release(): void {
         $src = file_get_contents(dirname(__DIR__) . '/includes/class-ls-armoury.php');
