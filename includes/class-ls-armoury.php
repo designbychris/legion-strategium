@@ -6,6 +6,7 @@ final class LS_Armoury {
         add_action('admin_post_ls_armoury_save', array(__CLASS__, 'save'));
         add_action('admin_post_ls_armoury_manage', array(__CLASS__, 'manage'));
         add_action('admin_post_ls_armoury_publish', array(__CLASS__, 'publish'));
+        add_action('admin_post_ls_armoury_clone', array(__CLASS__, 'clone_release'));
         add_action('admin_enqueue_scripts', array(__CLASS__, 'admin_assets'));
     }
     public static function admin_assets(string $hook): void {
@@ -51,6 +52,54 @@ final class LS_Armoury {
         }
         wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php')));
         exit;
+    }
+
+    /** A clone is a new independent draft. Never copy armies or battles. */
+    public static function clone_release(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_armoury_clone');
+        $source = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
+        $version = isset($_POST['ls_version']) ? sanitize_text_field(wp_unslash($_POST['ls_version'])) : '';
+        $notice = self::clone_release_data($source, $version) ? 'cloned' : 'clone_failed';
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php')));
+        exit;
+    }
+
+    /** Transactional copy of release-scoped catalogue records with remapped faction IDs. */
+    public static function clone_release_data(int $source, string $version): bool {
+        global $wpdb;
+        $version = trim($version);
+        if ($source <= 0 || $version === '' || strlen($version) > 80 || !preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/', $version)) { return false; }
+        $release_table = LS_Schema::table('releases');
+        $original = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . $release_table . ' WHERE id = %d', $source));
+        if (!$original || !in_array($original->status, array('draft', 'published'), true)) { return false; }
+        $existing = $wpdb->get_var($wpdb->prepare('SELECT id FROM ' . $release_table . ' WHERE edition_id = %d AND version = %s', (int)$original->edition_id, $version));
+        if ($existing) { return false; }
+        if ($wpdb->query('START TRANSACTION') === false) { return false; }
+        $ok = $wpdb->insert($release_table, array('edition_id'=>(int)$original->edition_id,'version'=>$version,'status'=>'draft'), array('%d','%s','%s')) === 1;
+        $new_id = $ok ? (int)$wpdb->insert_id : 0;
+        $map = array();
+        if ($ok) {
+            foreach (self::rows('factions', 'release_id = %d', array($source)) as $row) {
+                if ($wpdb->insert(LS_Schema::table('factions'), array('release_id'=>$new_id,'slug'=>$row->slug,'title'=>$row->title,'data'=>$row->data), array('%d','%s','%s','%s')) !== 1) { $ok = false; break; }
+                $map[(int)$row->id] = (int)$wpdb->insert_id;
+            }
+        }
+        if ($ok) {
+            foreach (self::rows('units', 'release_id = %d', array($source)) as $row) {
+                if (!isset($map[(int)$row->faction_id])) { $ok = false; break; }
+                if ($wpdb->insert(LS_Schema::table('units'), array('release_id'=>$new_id,'faction_id'=>$map[(int)$row->faction_id],'slug'=>$row->slug,'title'=>$row->title,'data'=>$row->data), array('%d','%d','%s','%s','%s')) !== 1) { $ok = false; break; }
+            }
+        }
+        foreach (array('detachments','wargear') as $table) {
+            if (!$ok) { break; }
+            foreach (self::rows($table, 'release_id = %d', array($source)) as $row) {
+                if ($wpdb->insert(LS_Schema::table($table), array('release_id'=>$new_id,'slug'=>$row->slug,'title'=>$row->title,'data'=>$row->data), array('%d','%s','%s','%s')) !== 1) { $ok = false; break; }
+            }
+        }
+        if (!$ok) { $wpdb->query('ROLLBACK'); return false; }
+        if ($wpdb->query('COMMIT') === false) { $wpdb->query('ROLLBACK'); return false; }
+        return true;
     }
 
     public static function rows(string $table, string $where = '', array $args = array()): array {
@@ -195,7 +244,7 @@ final class LS_Armoury {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
         echo '<h2>1. Editions</h2>' . self::form('edition', '<p><label>Title <input required name="ls_title" placeholder="Horus Heresy Third Edition"></label> <label>Slug <input name="ls_slug" placeholder="hh-3"></label></p>');
         echo '<h2>2. Ruleset Releases</h2>' . self::form('release', '<p><label>Edition <select name="ls_edition" required>' . self::options($editions) . '</select></label> <label>Version <input required name="ls_version" placeholder="2026-draft-1"></label></p>');
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
@@ -205,6 +254,7 @@ final class LS_Armoury {
             $edition_title = 'Unknown edition';
             foreach ($editions as $edition) { if ((int)$edition->id === (int)$release->edition_id) { $edition_title = $edition->title; break; } }
             echo '<div class="ls-release-row"><strong>' . esc_html($edition_title . ' — ' . $release->version) . '</strong> <span>' . esc_html($release->status) . '</span>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_armoury_clone"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_clone', '_wpnonce', true, false) . '<label>New draft version <input required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" name="ls_version" placeholder="2026-draft-2"></label> <button class="button">Clone to draft</button></form>';
             if ($release->status === 'draft') {
                 echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Publish and permanently lock this release?&quot;);"><input type="hidden" name="action" value="ls_armoury_publish"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_publish', '_wpnonce', true, false) . '<button class="button button-secondary">Publish release</button></form>';
             }
