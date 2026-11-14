@@ -145,6 +145,32 @@ final class LS_Armoury {
         return $result;
     }
 
+    /** Return a user-facing reason instead of silently dropping a populated option row. */
+    public static function unit_option_error($input, array $allowed_slugs, array $model_names): string {
+        if (!is_array($input)) { return 'Upgrade options must be an array.'; }
+        foreach (array_slice($input, 0, 30) as $index => $entry) {
+            if (!is_array($entry)) { return 'An upgrade option has invalid fields.'; }
+            $name = isset($entry['name']) && is_scalar($entry['name']) ? trim((string)$entry['name']) : '';
+            $from = isset($entry['from']) && is_scalar($entry['from']) ? (string)$entry['from'] : '';
+            $to = isset($entry['to']) && is_scalar($entry['to']) ? (string)$entry['to'] : '';
+            $type = isset($entry['type']) && is_scalar($entry['type']) ? (string)$entry['type'] : '';
+            $model = isset($entry['model']) && is_scalar($entry['model']) ? (string)$entry['model'] : '';
+            // Completely empty spare rows are intentionally ignored.
+            if ($name === '' && $from === '' && $to === '' && $model === '') { continue; }
+            $number = $index + 1;
+            if ($name === '') { return 'Option ' . $number . ': enter an option name before saving.'; }
+            if (!in_array($type, array('add','replace','model'), true)) { return 'Option ' . $number . ': choose a valid option type.'; }
+            if ($type === 'add' && $from !== '') { return 'Option ' . $number . ': Add equipment cannot replace equipment. Choose Exchange equipment instead.'; }
+            if ($type === 'replace' && ($from === '' || $to === '')) { return 'Option ' . $number . ': choose both the old and new equipment.'; }
+            if ($type === 'add' && $to === '') { return 'Option ' . $number . ': choose equipment to add.'; }
+            if ($type === 'model' && $model === '') { return 'Option ' . $number . ': choose an eligible model.'; }
+            if (count(self::sanitise_unit_options(array($entry), $allowed_slugs, $model_names)) !== 1) {
+                return 'Option ' . $number . ': invalid model, equipment, points or limits. Equipment must belong to this ruleset release.';
+            }
+        }
+        return '';
+    }
+
     /** Calculate an option subtotal only after validating each selection against its limits. */
     public static function option_points_total(array $options, array $selections): ?int {
         $total = 0;
@@ -326,7 +352,14 @@ final class LS_Armoury {
                                     $option_slugs = array_map(static function ($e) { return (string)$e->slug; }, $equipment_for_options);
                                     $option_models = array_map(static function ($m) { return (string)$m['name']; }, $data['model_profiles'] ?? array());
                                     $raw_options = is_array($_POST['ls_unit_options']) ? wp_unslash($_POST['ls_unit_options']) : array();
-                                    $data['unit_options'] = self::sanitise_unit_options($raw_options, $option_slugs, $option_models);
+                                    $option_error = self::unit_option_error($raw_options, $option_slugs, $option_models);
+                                    if ($option_error !== '') {
+                                        // Do not silently erase invalid option rows or overwrite existing data.
+                                        $values = array();
+                                        $notice = 'option_invalid';
+                                    } else {
+                                        $data['unit_options'] = self::sanitise_unit_options($raw_options, $option_slugs, $option_models);
+                                    }
                                 }
                                 $values['faction_id'] = $faction;
                                 $values['data'] = wp_json_encode($data);
@@ -414,7 +447,7 @@ final class LS_Armoury {
                 foreach ($models as $model) { $name = (string)($model['name'] ?? ''); if ($name !== '') { $form .= '<option value="' . esc_attr($name) . '" ' . selected($link['model'] ?? '', $name, false) . '>' . esc_html($name) . '</option>'; } }
                 $form .= '</select></label></p>';
             }
-            $form .= '</details><details class="ls-sheet-panel"><summary>Upgrade options and points</summary><p class="description">Define optional equipment, equipment exchanges, or additional models. References are limited to this ruleset. Blank names are ignored; maximum 30 options.</p>';
+            $form .= '</details><details class="ls-sheet-panel"><summary>Upgrade options and points</summary><p class="description"><strong>Every upgrade needs a Name.</strong> For an exchange, choose Exchange equipment and select both weapons. Equipment choices show only records from this unit’s ruleset release (ID ' . (int)$record->release_id . '). Blank unused rows are ignored; maximum 30 options.</p>';
             $unit_options = isset($data['unit_options']) && is_array($data['unit_options']) ? $data['unit_options'] : array();
             for ($i=0; $i<max(3, min(30, count($unit_options)+1)); $i++) {
                 $opt = $unit_options[$i] ?? array();
@@ -484,7 +517,7 @@ final class LS_Armoury {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
         echo '<h2>1. Editions</h2>' . self::form('edition', '<p><label>Title <input required name="ls_title" placeholder="Horus Heresy Third Edition"></label> <label>Slug <input name="ls_slug" placeholder="hh-3"></label></p>');
         echo '<h2>2. Ruleset Releases</h2>' . self::form('release', '<p><label>Edition <select name="ls_edition" required>' . self::options($editions) . '</select></label> <label>Version <input required name="ls_version" placeholder="2026-draft-1"></label></p>');
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
