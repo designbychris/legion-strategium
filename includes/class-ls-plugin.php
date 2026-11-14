@@ -2,12 +2,16 @@
 if (!defined('ABSPATH')) { exit; }
 final class LS_Plugin {
     public static function boot(): void {
+        add_action('admin_init', array(__CLASS__, 'upgrade_schema'));
         LS_Accounts::boot();
         LS_Armoury::boot();
         add_action('admin_menu', array(__CLASS__, 'admin_menu'));
         add_action('rest_api_init', array(__CLASS__, 'routes'));
         add_shortcode('legion_strategium', array(__CLASS__, 'shortcode'));
         add_action('wp_enqueue_scripts', array(__CLASS__, 'assets'));
+    }
+    public static function upgrade_schema(): void {
+        if (current_user_can('manage_options') && (string)get_option('ls_schema_version', '0') !== LS_Schema::VERSION) { LS_Schema::activate(); }
     }
     public static function admin_menu(): void {
         add_menu_page(__('Legion Strategium', 'legion-strategium'), __('Strategium', 'legion-strategium'), 'manage_options', 'legion-strategium', array(__CLASS__, 'admin_page'), 'dashicons-shield', 58);

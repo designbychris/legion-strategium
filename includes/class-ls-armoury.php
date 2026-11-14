@@ -7,6 +7,8 @@ final class LS_Armoury {
         add_action('admin_post_ls_armoury_manage', array(__CLASS__, 'manage'));
         add_action('admin_post_ls_armoury_publish', array(__CLASS__, 'publish'));
         add_action('admin_post_ls_armoury_clone', array(__CLASS__, 'clone_release'));
+        add_action('admin_post_ls_rule_save', array(__CLASS__, 'rule_save'));
+        add_action('admin_post_ls_rule_delete', array(__CLASS__, 'rule_delete'));
         add_action('admin_enqueue_scripts', array(__CLASS__, 'admin_assets'));
     }
     public static function admin_assets(string $hook): void {
@@ -184,6 +186,65 @@ final class LS_Armoury {
         return $total;
     }
 
+    /** Rules are reusable within a release; never resolve names across releases. */
+    public static function sanitise_rule(array $input): array {
+        $type = isset($input['type']) && is_scalar($input['type']) ? trim((string)$input['type']) : 'special';
+        if (!in_array($type, array('special','trait','weapon','unit'), true)) { $type = 'special'; }
+        $description = isset($input['description']) && is_scalar($input['description']) ? trim((string)$input['description']) : '';
+        return array('type'=>$type, 'description'=>substr(strip_tags($description), 0, 5000));
+    }
+    public static function sanitise_rule_links($input, array $allowed): array {
+        if (!is_array($input)) { return array(); }
+        $result = array();
+        foreach (array_slice($input, 0, 40) as $slug) {
+            if (!is_scalar($slug)) { continue; }
+            $slug = trim((string)$slug);
+            if ($slug !== '' && in_array($slug, $allowed, true) && !in_array($slug, $result, true)) { $result[] = $slug; }
+        }
+        return $result;
+    }
+    public static function rule_save(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_rule_save');
+        global $wpdb;
+        $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
+        $release = isset($_POST['ls_release']) ? absint($_POST['ls_release']) : 0;
+        $title = isset($_POST['ls_title']) ? sanitize_text_field(wp_unslash($_POST['ls_title'])) : '';
+        $slug = sanitize_title(isset($_POST['ls_slug']) ? wp_unslash($_POST['ls_slug']) : $title);
+        $raw = isset($_POST['ls_rule']) && is_array($_POST['ls_rule']) ? wp_unslash($_POST['ls_rule']) : array();
+        $notice = 'invalid';
+        if ($id) {
+            $record = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . LS_Schema::table('rules') . ' WHERE id = %d', $id));
+            $release = $record ? (int)$record->release_id : 0;
+        }
+        if ($release && self::release_is_draft($release) && !self::release_has_armies($release) && $title !== '' && $slug !== '') {
+            $values = array('title'=>$title, 'slug'=>$slug, 'data'=>wp_json_encode(self::sanitise_rule($raw)));
+            if ($id) { $ok = $wpdb->update(LS_Schema::table('rules'), $values, array('id'=>$id,'release_id'=>$release), array('%s','%s','%s'), array('%d','%d')); }
+            else { $values['release_id'] = $release; $ok = $wpdb->insert(LS_Schema::table('rules'), $values, array('%s','%s','%s','%d')); }
+            $notice = $ok !== false ? 'updated' : 'invalid';
+        }
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
+    }
+    public static function rule_delete(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_rule_delete');
+        global $wpdb;
+        $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
+        $record = $id ? $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . LS_Schema::table('rules') . ' WHERE id = %d', $id)) : null;
+        $notice = 'invalid';
+        if ($record && self::release_is_draft((int)$record->release_id) && !self::release_has_armies((int)$record->release_id)) {
+            // Keep referenced rules intact; unlink them from units and equipment first.
+            $used = false;
+            foreach (array('units','wargear') as $table) {
+                foreach (self::rows($table, 'release_id = %d', array((int)$record->release_id)) as $item) {
+                    $data = json_decode((string)$item->data, true);
+                    if (is_array($data) && in_array($record->slug, $data['rule_links'] ?? array(), true)) { $used = true; break; }
+                }
+            }
+            if (!$used) { $notice = $wpdb->delete(LS_Schema::table('rules'), array('id'=>$id), array('%d')) === 1 ? 'deleted' : 'invalid'; }
+        }
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
+    }
     /** Publishing is one-way. Further rules changes require a separate draft release. */
     public static function publish(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
@@ -243,7 +304,7 @@ final class LS_Armoury {
                 if ($wpdb->insert(LS_Schema::table('units'), array('release_id'=>$new_id,'faction_id'=>$map[(int)$row->faction_id],'slug'=>$row->slug,'title'=>$row->title,'data'=>$row->data), array('%d','%d','%s','%s','%s')) !== 1) { $ok = false; break; }
             }
         }
-        foreach (array('detachments','wargear') as $table) {
+        foreach (array('detachments','wargear','rules') as $table) {
             if (!$ok) { break; }
             foreach (self::rows($table, 'release_id = %d', array($source)) as $row) {
                 if ($wpdb->insert(LS_Schema::table($table), array('release_id'=>$new_id,'slug'=>$row->slug,'title'=>$row->title,'data'=>$row->data), array('%d','%s','%s','%s')) !== 1) { $ok = false; break; }
@@ -317,6 +378,14 @@ final class LS_Armoury {
                         if ($kind === 'wargear') {
                             $raw = isset($_POST['ls_equipment']) && is_array($_POST['ls_equipment']) ? wp_unslash($_POST['ls_equipment']) : array();
                             $values['data'] = wp_json_encode(self::sanitise_equipment($raw));
+                            if (isset($_POST['ls_rule_links_present'])) {
+                                $existing = json_decode((string)$record->data, true);
+                                $existing = is_array($existing) ? $existing : array();
+                                $allowed_rules = array_map(static function ($r) { return (string)$r->slug; }, self::rows('rules', 'release_id = %d', array((int)$record->release_id)));
+                                $new_data = self::sanitise_equipment($raw);
+                                $new_data['rule_links'] = self::sanitise_rule_links(wp_unslash(isset($_POST['ls_rule_links']) ? $_POST['ls_rule_links'] : array()), $allowed_rules);
+                                $values['data'] = wp_json_encode($new_data);
+                            }
                             $formats[] = '%s';
                         }
                         if ($kind === 'unit') {
@@ -361,6 +430,10 @@ final class LS_Armoury {
                                         $data['unit_options'] = self::sanitise_unit_options($raw_options, $option_slugs, $option_models);
                                     }
                                 }
+                                if (isset($_POST['ls_rule_links_present'])) {
+                                    $allowed_rules = array_map(static function ($r) { return (string)$r->slug; }, self::rows('rules', 'release_id = %d', array((int)$record->release_id)));
+                                    $data['rule_links'] = self::sanitise_rule_links(wp_unslash(isset($_POST['ls_rule_links']) ? $_POST['ls_rule_links'] : array()), $allowed_rules);
+                                }
                                 $values['faction_id'] = $faction;
                                 $values['data'] = wp_json_encode($data);
                                 $formats = array('%s','%s','%d','%s');
@@ -387,6 +460,13 @@ final class LS_Armoury {
         global $wpdb;
         return (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('armies') . ' WHERE release_id = %d', $id)) > 0;
     }
+    private static function rule_link_fields(object $record, array $data): string {
+        $rules = self::rows('rules', 'release_id = %d', array((int)$record->release_id));
+        $selected = isset($data['rule_links']) && is_array($data['rule_links']) ? $data['rule_links'] : array();
+        $html = '<details class="ls-sheet-panel"><summary>Linked rules and traits</summary><p>Choose reusable rules from this release. Hold Ctrl/Cmd to select several; leave empty to unlink all.</p><select multiple size="6" name="ls_rule_links[]">';
+        foreach ($rules as $rule) { $html .= '<option value="' . esc_attr($rule->slug) . '" ' . selected(in_array($rule->slug, $selected, true), true, false) . '>' . esc_html($rule->title) . '</option>'; }
+        return $html . '</select></details><input type="hidden" name="ls_rule_links_present" value="1">';
+    }
     private static function manage_form(string $kind, object $record, array $factions): string {
         $draft = self::release_is_draft((int)$record->release_id);
         if (!$draft) { return '<em>Published: locked</em>'; }
@@ -408,9 +488,11 @@ final class LS_Armoury {
             foreach (array('equipment'=>'Equipment','ranged'=>'Ranged weapon','melee'=>'Melee weapon') as $value=>$label) { $form .= '<option value="' . esc_attr($value) . '" ' . selected($data['type'] ?? 'equipment', $value, false) . '>' . esc_html($label) . '</option>'; }
             $form .= '</select></label>';
             foreach (array('range'=>'Range','strength'=>'Strength','ap'=>'AP','damage'=>'Damage','attacks'=>'Attacks','initiative_modifier'=>'Initiative Modifier','special'=>'Special') as $key=>$label) { $form .= '<label>' . esc_html($label) . '<input maxlength="80" name="ls_equipment[' . esc_attr($key) . ']" value="' . esc_attr((string)($data['profile'][$key] ?? '')) . '"></label>'; }
-            $form .= '<label>Rule names (comma-separated) <input name="ls_equipment[rules]" value="' . esc_attr(implode(', ', $data['rules'] ?? array())) . '"></label></div>';
+            $form .= '<label>Legacy rule names (comma-separated) <input name="ls_equipment[rules]" value="' . esc_attr(implode(', ', $data['rules'] ?? array())) . '"></label></div>';
+            $form .= self::rule_link_fields($record, $data);
         }
         if ($kind === 'unit') {
+            $form .= self::rule_link_fields($record, $data);
             $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
             $form .= '<div class="ls-profile-fields"><strong>Characteristics</strong><div class="ls-profile-grid">';
             foreach (self::profile_fields() as $key => $label) {
@@ -523,6 +605,22 @@ final class LS_Armoury {
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
         echo '<h2>4. Units</h2><p>Choose a faction belonging to the selected release. Mismatched relationships are rejected.</p>' . self::form('unit', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Faction <select name="ls_faction" required>' . self::options($factions) . '</select></label></p><p><label>Unit <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Role <input name="ls_role" placeholder="Example role"></label> <label>Base points <input type="number" name="ls_points" min="0" max="100000" value="0" required></label></p>');
         echo '<h2>5. Weapons and Wargear</h2><p>Reusable, release-specific profiles. Create equipment before assigning it to a unit.</p>' . self::form('wargear', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Type <select name="ls_equipment[type]"><option value="equipment">Equipment</option><option value="ranged">Ranged weapon</option><option value="melee">Melee weapon</option></select></label></p><p>Weapon profile values and rules can be edited after creation.</p>');
+        echo '<h2>6. Codex of War — Rules and Traits</h2><p>Write only descriptions you are authorised to publish. Rules are independent for each release.</p>';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_rule_save">' . wp_nonce_field('ls_rule_save', '_wpnonce', true, false) . '<label>Release <select name="ls_release">' . self::options($releases, 'version') . '</select></label> <label>Name <input name="ls_title" required></label> <label>Slug <input name="ls_slug"></label> <label>Type <select name="ls_rule[type]"><option value="special">Special rule</option><option value="trait">Trait</option><option value="weapon">Weapon rule</option><option value="unit">Unit rule</option></select></label><p><label>Description<br><textarea name="ls_rule[description]" rows="3" cols="70"></textarea></label></p><button class="button button-primary">Add rule</button></form>';
+        $rule_rows = self::rows('rules');
+        echo '<h3>Rule records (' . count($rule_rows) . ')</h3><table class="widefat striped"><thead><tr><th>Rule</th><th>Release</th><th>Manage</th></tr></thead><tbody>';
+        foreach ($rule_rows as $rule) {
+            $rule_data = json_decode((string)$rule->data, true); $rule_data = is_array($rule_data) ? $rule_data : array();
+            echo '<tr><td>' . esc_html($rule->title) . '</td><td>' . (int)$rule->release_id . '</td><td>';
+            if (self::release_is_draft((int)$rule->release_id) && !self::release_has_armies((int)$rule->release_id)) {
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_rule_save"><input type="hidden" name="ls_id" value="' . (int)$rule->id . '">' . wp_nonce_field('ls_rule_save', '_wpnonce', true, false) . '<input name="ls_title" required value="' . esc_attr($rule->title) . '"> <input name="ls_slug" required value="' . esc_attr($rule->slug) . '"> <select name="ls_rule[type]">';
+                foreach (array('special'=>'Special rule','trait'=>'Trait','weapon'=>'Weapon rule','unit'=>'Unit rule') as $value=>$label) { echo '<option value="' . esc_attr($value) . '" ' . selected($rule_data['type'] ?? 'special', $value, false) . '>' . esc_html($label) . '</option>'; }
+                echo '</select><textarea name="ls_rule[description]" rows="2" cols="55">' . esc_textarea($rule_data['description'] ?? '') . '</textarea> <button class="button">Save</button></form>';
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Delete this unused draft rule?&quot;)"><input type="hidden" name="action" value="ls_rule_delete"><input type="hidden" name="ls_id" value="' . (int)$rule->id . '">' . wp_nonce_field('ls_rule_delete', '_wpnonce', true, false) . '<button class="button button-link-delete">Delete</button></form>';
+            } else { echo '<em>Locked</em>'; }
+            echo '</td></tr>';
+        }
+        echo '</tbody></table>';
         echo '<h2>Release publication</h2><p>Publishing permanently locks this release. Check all factions, units and points first. A release must contain at least one faction and unit.</p>';
         foreach ($releases as $release) {
             $edition_title = 'Unknown edition';
@@ -607,6 +705,7 @@ final class LS_Armoury {
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         $release_ids = array(); foreach ($releases as $release) { $release_ids[(int)$release->id] = $release; }
         $faction_ids = array(); foreach ($factions as $faction) { $faction_ids[(int)$faction->id] = $faction; }
+        $rules_by_release = array(); foreach (self::rows('rules') as $rule) { $rules_by_release[(int)$rule->release_id][(string)$rule->slug] = $rule; }
         $equipment_by_release = array(); foreach (self::rows('wargear') as $item) { $equipment_by_release[(int)$item->release_id][(string)$item->slug] = $item; }
         $html = '<section class="ls-catalogue"> <h3>The Armoury</h3><p class="ls-muted">Read-only catalogue preview. Army creation and validation arrive in later phases.</p>';
         if (!$units) { return $html . '<p>No units have been added yet. Administrators can populate the catalogue from Strategium in WordPress.</p></section>'; }
@@ -628,6 +727,17 @@ final class LS_Armoury {
                             $item = $equipment_by_release[(int)$release->id][$link['slug'] ?? ''] ?? null;
                             if (!$item) { continue; }
                             $html .= '<li>' . esc_html($item->title) . (!empty($link['model']) ? ' — ' . esc_html($link['model']) : '') . '</li>';
+                        }
+                        $html .= '</ul></div>';
+                    }
+                    if (!empty($data['rule_links']) && is_array($data['rule_links'])) {
+                        $html .= '<div class="ls-unit-rules"><strong>Special rules and traits</strong><ul>';
+                        foreach ($data['rule_links'] as $slug) {
+                            $rule = $rules_by_release[(int)$release->id][$slug] ?? null;
+                            if (!$rule) { continue; }
+                            $rule_data = json_decode((string)$rule->data, true);
+                            $description = is_array($rule_data) ? (string)($rule_data['description'] ?? '') : '';
+                            $html .= '<li><details><summary>' . esc_html($rule->title) . '</summary><p>' . esc_html($description) . '</p></details></li>';
                         }
                         $html .= '</ul></div>';
                     }
