@@ -14,7 +14,7 @@ final class ArmouryReleaseDeletionTest extends TestCase {
     }
     public function test_release_deletion_is_scoped_and_requires_confirmation(): void {
         $source = file_get_contents(dirname(__DIR__) . '/includes/class-ls-armoury.php');
-        self::assertStringContainsString("array('release_id'=>$id)", $source);
+        self::assertStringContainsString('array(\'release_id\'=>$id)', $source);
         self::assertStringContainsString("'status'=>'draft'", $source);
         self::assertStringContainsString('hash_equals((string)$release->version, $expected_version)', $source);
         self::assertStringContainsString("$" . "wpdb->query('ROLLBACK')", $source);
