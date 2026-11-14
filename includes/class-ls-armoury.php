@@ -7,6 +7,7 @@ final class LS_Armoury {
         add_action('admin_post_ls_armoury_manage', array(__CLASS__, 'manage'));
         add_action('admin_post_ls_armoury_publish', array(__CLASS__, 'publish'));
         add_action('admin_post_ls_armoury_clone', array(__CLASS__, 'clone_release'));
+        add_action('admin_post_ls_armoury_delete_release', array(__CLASS__, 'delete_release'));
         add_action('admin_post_ls_rule_save', array(__CLASS__, 'rule_save'));
         add_action('admin_post_ls_rule_delete', array(__CLASS__, 'rule_delete'));
         add_action('admin_enqueue_scripts', array(__CLASS__, 'admin_assets'));
@@ -275,6 +276,63 @@ final class LS_Armoury {
         $notice = self::clone_release_data($source, $version) ? 'cloned' : 'clone_failed';
         $context = self::browse_context($_POST);
         wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
+        exit;
+    }
+
+    /** Count every catalogue row that would be removed, without touching another release. */
+    public static function release_deletion_counts(int $id): array {
+        global $wpdb;
+        $counts = array();
+        foreach (array('units', 'factions', 'wargear', 'rules', 'detachments') as $table) {
+            $counts[$table] = (int)$wpdb->get_var($wpdb->prepare(
+                'SELECT COUNT(*) FROM ' . LS_Schema::table($table) . ' WHERE release_id = %d', $id
+            ));
+        }
+        return $counts;
+    }
+
+    /** No permanent deletion of published releases or any release used by armies/battles. */
+    public static function release_can_be_deleted(int $id): bool {
+        global $wpdb;
+        if ($id <= 0 || !self::release_is_draft($id) || self::release_has_armies($id)) { return false; }
+        // An army may have been referenced by a battle; refuse deletion if any remains.
+        $battles = (int)$wpdb->get_var($wpdb->prepare(
+            'SELECT COUNT(*) FROM ' . LS_Schema::table('battles') . ' b INNER JOIN ' . LS_Schema::table('armies') . ' a ON b.army_id = a.id WHERE a.release_id = %d', $id
+        ));
+        return $battles === 0;
+    }
+
+    /** Deletes only the requested unused draft. All SQL operations must succeed or roll back. */
+    public static function delete_release_data(int $id, string $expected_version): bool {
+        global $wpdb;
+        if ($id <= 0 || $expected_version === '' || !self::release_can_be_deleted($id)) { return false; }
+        $table = LS_Schema::table('releases');
+        $release = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . $table . ' WHERE id = %d', $id));
+        if (!$release || $release->status !== 'draft' || !hash_equals((string)$release->version, $expected_version)) { return false; }
+        if ($wpdb->query('START TRANSACTION') === false) { return false; }
+        // Recheck under the transaction before modifying anything.
+        if (!self::release_can_be_deleted($id)) { $wpdb->query('ROLLBACK'); return false; }
+        $ok = true;
+        foreach (array('units', 'factions', 'wargear', 'rules', 'detachments') as $name) {
+            $result = $wpdb->delete(LS_Schema::table($name), array('release_id'=>$id), array('%d'));
+            if ($result === false) { $ok = false; break; }
+        }
+        if ($ok) {
+            $ok = $wpdb->delete($table, array('id'=>$id, 'status'=>'draft', 'version'=>$expected_version), array('%d','%s','%s')) === 1;
+        }
+        if (!$ok) { $wpdb->query('ROLLBACK'); return false; }
+        if ($wpdb->query('COMMIT') === false) { $wpdb->query('ROLLBACK'); return false; }
+        return true;
+    }
+
+    public static function delete_release(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_armoury_delete_release');
+        $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
+        $version = isset($_POST['ls_confirm_version']) && is_string($_POST['ls_confirm_version'])
+            ? sanitize_text_field(wp_unslash($_POST['ls_confirm_version'])) : '';
+        $notice = self::delete_release_data($id, $version) ? 'release_deleted' : 'release_delete_failed';
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium', 'ls_armoury_notice'=>$notice), admin_url('admin.php')));
         exit;
     }
 
@@ -599,7 +657,7 @@ final class LS_Armoury {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
         echo '<h2>1. Editions</h2>' . self::form('edition', '<p><label>Title <input required name="ls_title" placeholder="Horus Heresy Third Edition"></label> <label>Slug <input name="ls_slug" placeholder="hh-3"></label></p>');
         echo '<h2>2. Ruleset Releases</h2>' . self::form('release', '<p><label>Edition <select name="ls_edition" required>' . self::options($editions) . '</select></label> <label>Version <input required name="ls_version" placeholder="2026-draft-1"></label></p>');
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
@@ -629,6 +687,23 @@ final class LS_Armoury {
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_armoury_clone"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_clone', '_wpnonce', true, false) . '<label>New draft version <input required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" name="ls_version" placeholder="2026-draft-2"></label> <button class="button">Clone to draft</button></form>';
             if ($release->status === 'draft') {
                 echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Publish and permanently lock this release?&quot;);"><input type="hidden" name="action" value="ls_armoury_publish"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_publish', '_wpnonce', true, false) . '<button class="button button-secondary">Publish release</button></form>';
+            }
+            if ($release->status === 'draft') {
+                $preview_id = isset($_GET['ls_delete_preview']) ? absint($_GET['ls_delete_preview']) : 0;
+                if ($preview_id === (int)$release->id && isset($_GET['_wpnonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'ls_release_preview_' . (int)$release->id)) {
+                    $counts = self::release_deletion_counts((int)$release->id);
+                    echo '<div class="ls-delete-release-preview"><p><strong>Permanent deletion preview:</strong> ' . esc_html($edition_title . ' — ' . $release->version) . '</p><p>';
+                    foreach ($counts as $name => $count) { echo esc_html(ucfirst($name) . ': ' . $count) . ' &nbsp; '; }
+                    echo '</p>';
+                    if (self::release_can_be_deleted((int)$release->id)) {
+                        echo '<p>This removes all catalogue records listed above. It cannot be undone. Other releases are not affected.</p>';
+                        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_armoury_delete_release"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_delete_release', '_wpnonce', true, false) . '<label>Type the exact version to confirm: <strong>' . esc_html($release->version) . '</strong> <input name="ls_confirm_version" required autocomplete="off"></label> <button class="button button-link-delete" onclick="return confirm(&quot;Permanently delete this draft release and its catalogue?&quot;)">Permanently delete draft</button></form>';
+                    } else { echo '<p><strong>Deletion blocked:</strong> this release is used by armies or battles.</p>'; }
+                    echo '</div>';
+                } else {
+                    $preview_url = wp_nonce_url(add_query_arg(array('page'=>'legion-strategium', 'ls_delete_preview'=>(int)$release->id), admin_url('admin.php')), 'ls_release_preview_' . (int)$release->id);
+                    echo '<a class="button button-link-delete" href="' . esc_url($preview_url) . '">Review draft deletion</a>';
+                }
             }
             echo '</div>';
         }
