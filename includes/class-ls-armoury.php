@@ -224,7 +224,7 @@ final class LS_Armoury {
             else { $values['release_id'] = $release; $ok = $wpdb->insert(LS_Schema::table('rules'), $values, array('%s','%s','%s','%d')); }
             $notice = $ok !== false ? 'updated' : 'invalid';
         }
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>'rules','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
     }
     public static function rule_delete(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
@@ -244,7 +244,7 @@ final class LS_Armoury {
             }
             if (!$used) { $notice = $wpdb->delete(LS_Schema::table('rules'), array('id'=>$id), array('%d')) === 1 ? 'deleted' : 'invalid'; }
         }
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>'rules','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
     }
     /** Publishing is one-way. Further rules changes require a separate draft release. */
     public static function publish(): void {
@@ -263,7 +263,7 @@ final class LS_Armoury {
             }
         }
         $context = self::browse_context($_POST);
-        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_chamber'=>'releases','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
 
@@ -275,7 +275,7 @@ final class LS_Armoury {
         $version = isset($_POST['ls_version']) ? sanitize_text_field(wp_unslash($_POST['ls_version'])) : '';
         $notice = self::clone_release_data($source, $version) ? 'cloned' : 'clone_failed';
         $context = self::browse_context($_POST);
-        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_chamber'=>'releases','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
 
@@ -332,7 +332,7 @@ final class LS_Armoury {
         $version = isset($_POST['ls_confirm_version']) && is_string($_POST['ls_confirm_version'])
             ? sanitize_text_field(wp_unslash($_POST['ls_confirm_version'])) : '';
         $notice = self::delete_release_data($id, $version) ? 'release_deleted' : 'release_delete_failed';
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium', 'ls_armoury_notice'=>$notice), admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium', 'ls_chamber'=>'releases', 'ls_armoury_notice'=>$notice), admin_url('admin.php')));
         exit;
     }
 
@@ -405,7 +405,7 @@ final class LS_Armoury {
             $data = wp_json_encode(array('role'=>$role,'base_points'=>$points));
             $result = self::release_is_draft($release) ? $wpdb->insert(LS_Schema::table('units'), array('release_id'=>$release,'faction_id'=>$faction,'slug'=>$slug,'title'=>$title,'data'=>$data), array('%d','%d','%s','%s','%s')) : false;
         }
-        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_armoury_notice'=>$result === 1 ? 'saved' : 'invalid'), admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>self::chamber_for_kind($kind),'ls_armoury_notice'=>$result === 1 ? 'saved' : 'invalid'), admin_url('admin.php')));
         exit;
     }
     /** Manage draft records only. Published releases are never changed in place. */
@@ -507,7 +507,7 @@ final class LS_Armoury {
         }
         $context = self::browse_context($_POST);
         if ($kind === 'unit' && $operation === 'edit' && $notice === 'updated') { $context['ls_edit_unit'] = $id; }
-        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_chamber'=>self::chamber_for_kind($kind),'ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
         exit;
     }
     public static function release_is_draft(int $id): bool {
@@ -651,18 +651,47 @@ final class LS_Armoury {
         return $html;
     }
     private static function browse_url(array $context): string {
-        return add_query_arg(array_merge(array('page'=>'legion-strategium'), $context), admin_url('admin.php'));
+        return add_query_arg(array_merge(array('page'=>'legion-strategium', 'ls_chamber'=>'units'), $context), admin_url('admin.php'));
     }
+    /** Allowlisted server-side chamber routing; never trust arbitrary query values. */
+    public static function admin_chamber(array $source): string {
+        $value = isset($source['ls_chamber']) && is_string($source['ls_chamber']) ? $source['ls_chamber'] : 'units';
+        return in_array($value, array('editions', 'releases', 'factions', 'units', 'wargear', 'rules'), true) ? $value : 'units';
+    }
+
+    public static function chamber_for_kind(string $kind): string {
+        return array('edition'=>'editions', 'release'=>'releases', 'faction'=>'factions', 'unit'=>'units', 'wargear'=>'wargear')[$kind] ?? 'units';
+    }
+
     public static function admin(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
         if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        $chambers = array('editions'=>'Editions', 'releases'=>'Releases', 'factions'=>'Factions', 'units'=>'Units', 'wargear'=>'Weapons & Wargear', 'rules'=>'Rules & Traits');
+        $chamber = self::admin_chamber($_GET);
+        echo '<nav class="nav-tab-wrapper ls-chambers" aria-label="Armoury chambers">';
+        foreach ($chambers as $key => $label) {
+            $url = add_query_arg(array('page'=>'legion-strategium', 'ls_chamber'=>$key), admin_url('admin.php'));
+            echo '<a class="nav-tab ' . ($chamber === $key ? 'nav-tab-active' : '') . '" href="' . esc_url($url) . '">' . esc_html($label) . '</a>';
+        }
+        echo '</nav><div class="ls-chamber-content">';
+        if ($chamber === 'editions') {
         echo '<h2>1. Editions</h2>' . self::form('edition', '<p><label>Title <input required name="ls_title" placeholder="Horus Heresy Third Edition"></label> <label>Slug <input name="ls_slug" placeholder="hh-3"></label></p>');
+        }
+        if ($chamber === 'releases') {
         echo '<h2>2. Ruleset Releases</h2>' . self::form('release', '<p><label>Edition <select name="ls_edition" required>' . self::options($editions) . '</select></label> <label>Version <input required name="ls_version" placeholder="2026-draft-1"></label></p>');
+        }
+        if ($chamber === 'factions') {
         echo '<h2>3. Factions</h2>' . self::form('faction', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label></p>');
+        }
+        if ($chamber === 'units') {
         echo '<h2>4. Units</h2><p>Choose a faction belonging to the selected release. Mismatched relationships are rejected.</p>' . self::form('unit', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Faction <select name="ls_faction" required>' . self::options($factions) . '</select></label></p><p><label>Unit <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Role <input name="ls_role" placeholder="Example role"></label> <label>Base points <input type="number" name="ls_points" min="0" max="100000" value="0" required></label></p>');
+        }
+        if ($chamber === 'wargear') {
         echo '<h2>5. Weapons and Wargear</h2><p>Reusable, release-specific profiles. Create equipment before assigning it to a unit.</p>' . self::form('wargear', '<p><label>Release <select name="ls_release" required>' . self::options($releases, 'version') . '</select></label> <label>Name <input required name="ls_title"></label> <label>Slug <input name="ls_slug"></label> <label>Type <select name="ls_equipment[type]"><option value="equipment">Equipment</option><option value="ranged">Ranged weapon</option><option value="melee">Melee weapon</option></select></label></p><p>Weapon profile values and rules can be edited after creation.</p>');
+        }
+        if ($chamber === 'rules') {
         echo '<h2>6. Codex of War — Rules and Traits</h2><p>Write only descriptions you are authorised to publish. Rules are independent for each release.</p>';
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_rule_save">' . wp_nonce_field('ls_rule_save', '_wpnonce', true, false) . '<label>Release <select name="ls_release">' . self::options($releases, 'version') . '</select></label> <label>Name <input name="ls_title" required></label> <label>Slug <input name="ls_slug"></label> <label>Type <select name="ls_rule[type]"><option value="special">Special rule</option><option value="trait">Trait</option><option value="weapon">Weapon rule</option><option value="unit">Unit rule</option></select></label><p><label>Description<br><textarea name="ls_rule[description]" rows="3" cols="70"></textarea></label></p><button class="button button-primary">Add rule</button></form>';
         $rule_rows = self::rows('rules');
@@ -679,6 +708,8 @@ final class LS_Armoury {
             echo '</td></tr>';
         }
         echo '</tbody></table>';
+        }
+        if ($chamber === 'releases') {
         echo '<h2>Release publication</h2><p>Publishing permanently locks this release. Check all factions, units and points first. A release must contain at least one faction and unit.</p>';
         foreach ($releases as $release) {
             $edition_title = 'Unknown edition';
@@ -701,19 +732,23 @@ final class LS_Armoury {
                     } else { echo '<p><strong>Deletion blocked:</strong> this release is used by armies or battles.</p>'; }
                     echo '</div>';
                 } else {
-                    $preview_url = wp_nonce_url(add_query_arg(array('page'=>'legion-strategium', 'ls_delete_preview'=>(int)$release->id), admin_url('admin.php')), 'ls_release_preview_' . (int)$release->id);
+                    $preview_url = wp_nonce_url(add_query_arg(array('page'=>'legion-strategium', 'ls_chamber'=>'releases', 'ls_delete_preview'=>(int)$release->id), admin_url('admin.php')), 'ls_release_preview_' . (int)$release->id);
                     echo '<a class="button button-link-delete" href="' . esc_url($preview_url) . '">Review draft deletion</a>';
                 }
             }
             echo '</div>';
         }
+        }
         $edition_names = array(); foreach ($editions as $e) { $edition_names[(int)$e->id] = $e->title; }
         $release_names = array(); foreach ($releases as $r) { $release_names[(int)$r->id] = $r->version; }
         $faction_names = array(); foreach ($factions as $f) { $faction_names[(int)$f->id] = $f->title; }
         $wargear = self::rows('wargear');
+        if ($chamber === 'wargear') {
         echo '<h2>Wargear records (' . count($wargear) . ')</h2><p>Equipment records are release-scoped and editable while draft.</p><table class="widefat striped"><thead><tr><th>Name</th><th>Release</th><th>Edit draft equipment</th></tr></thead><tbody>';
         foreach ($wargear as $item) { echo '<tr><td>' . esc_html($item->title) . '</td><td>' . esc_html($release_names[(int)$item->release_id] ?? 'Unknown') . '</td><td>' . self::manage_form('wargear', $item, array()) . '</td></tr>'; }
         echo '</tbody></table>';
+        }
+        if ($chamber === 'units' || $chamber === 'factions') {
         // Keep the release catalogue scoped before rendering any unit editor.
         $context = self::browse_context($_GET);
         $edition_id = (int)($context['ls_edition'] ?? 0);
@@ -736,8 +771,9 @@ final class LS_Armoury {
             foreach ($visible_factions as $f) { if ((int)$f->id === (int)$u->faction_id && (int)$f->release_id === (int)$u->release_id) { return true; } }
             return false;
         }));
+        if ($chamber === 'units') {
         echo '<h2 id="ls-catalogue">Catalogue browser</h2><form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="ls-catalogue-filters">';
-        echo '<input type="hidden" name="page" value="legion-strategium"><label>Edition <select name="ls_edition">' . self::filter_options($editions, 'title', $edition_id, 'All editions') . '</select></label>';
+        echo '<input type="hidden" name="page" value="legion-strategium"><input type="hidden" name="ls_chamber" value="units"><label>Edition <select name="ls_edition">' . self::filter_options($editions, 'title', $edition_id, 'All editions') . '</select></label>';
         echo '<label>Release <select name="ls_release">' . self::filter_options($visible_releases, 'version', $release_id, 'All releases') . '</select></label>';
         echo '<label>Faction <select name="ls_faction">' . self::filter_options($visible_factions, 'title', $faction_id, 'All factions') . '</select></label>';
         echo '<label>Search units <input type="search" name="ls_search" value="' . esc_attr($search) . '" placeholder="Unit name or slug"></label><button class="button button-primary">Filter catalogue</button> <a class="button" href="' . esc_url(self::browse_url(array())) . '#ls-catalogue">Clear</a></form>';
@@ -768,12 +804,18 @@ final class LS_Armoury {
             echo '<a class="button ' . ($i === $page ? 'button-primary' : '') . '" href="' . esc_url(self::browse_url(array_merge($context, array('ls_page'=>$i))) . '#ls-catalogue') . '">' . $i . '</a> ';
         }
         echo '</nav>';
+        }
+        if ($chamber === 'factions') {
+        echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="ls-catalogue-filters"><input type="hidden" name="page" value="legion-strategium"><input type="hidden" name="ls_chamber" value="factions"><label>Release <select name="ls_release">' . self::filter_options($releases, 'version', $release_id, 'All releases') . '</select></label><button class="button button-primary">Filter factions</button></form>';
         // Keep faction management available but limit it to the selected catalogue.
         echo '<h2>Factions (' . count($visible_factions) . ')</h2><table class="widefat striped"><thead><tr><th>Faction</th><th>Release</th><th>Manage draft</th></tr></thead><tbody>';
         foreach ($visible_factions as $f) {
             echo '<tr><td>' . esc_html($f->title) . '</td><td>' . esc_html($release_names[(int)$f->release_id] ?? 'Unknown release') . '</td><td>' . self::manage_form('faction', $f, $factions) . '</td></tr>';
         }
         echo '</tbody></table>';
+        }
+        }
+        echo '</div>';
         echo '</div>';
     }
     public static function catalogue(): string {

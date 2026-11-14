@@ -24,3 +24,10 @@
 .ls-armoury-admin .ls-pagination {margin:14px 0;display:flex;gap:6px;flex-wrap:wrap;}
 
 .ls-sheet-panel{margin:16px 0;padding:12px;border:1px solid #c3c4c7;background:#fff}.ls-sheet-panel summary{font-weight:700;cursor:pointer;padding:6px}.ls-model-profile{border:1px solid #ddd;padding:12px;margin:12px 0}.ls-model-profile legend{font-weight:600;padding:0 6px}.ls-model-profile>label{display:block;margin-bottom:10px}.ls-model-profile input{max-width:100%}
+
+/* II.4A: dedicated Armoury chambers, retaining native WordPress tab affordances. */
+.ls-armoury-admin .ls-chambers {display:flex;flex-wrap:wrap;gap:3px;margin:20px 0 0;border-bottom-color:#c9a052;}
+.ls-armoury-admin .ls-chambers .nav-tab {margin-left:0;padding:9px 15px;white-space:nowrap;}
+.ls-armoury-admin .ls-chambers .nav-tab-active {border-top:3px solid #c9a052;padding-top:7px;color:#201d19;}
+.ls-armoury-admin .ls-chamber-content {padding:5px 0 20px;}
+@media(max-width:782px){.ls-armoury-admin .ls-chambers .nav-tab{flex:1 1 auto;text-align:center;}}
