@@ -460,7 +460,7 @@ final class LS_Armoury {
                                 $data['base_points'] = $points;
                                 $profile_input = isset($_POST['ls_profile']) && is_array($_POST['ls_profile']) ? wp_unslash($_POST['ls_profile']) : array();
                                 $data['profile'] = self::sanitise_profile($profile_input);
-                                if (isset($_POST['ls_model_profiles'])) {
+                                if (isset($_POST['ls_model_profiles_present'])) {
                                     $raw_models = is_array($_POST['ls_model_profiles']) ? wp_unslash($_POST['ls_model_profiles']) : array();
                                     $data['model_profiles'] = self::sanitise_model_profiles($raw_models);
                                 }
@@ -468,14 +468,14 @@ final class LS_Armoury {
                                     $raw_composition = is_array($_POST['ls_composition']) ? wp_unslash($_POST['ls_composition']) : array();
                                     $data['composition'] = self::sanitise_composition($raw_composition);
                                 }
-                                if (isset($_POST['ls_equipment_links'])) {
+                                if (isset($_POST['ls_equipment_links_present'])) {
                                     $equipment = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
                                     $slugs = array_map(static function ($e) { return (string)$e->slug; }, $equipment);
                                     $names = array_map(static function ($m) { return (string)$m['name']; }, $data['model_profiles'] ?? array());
                                     $raw_links = is_array($_POST['ls_equipment_links']) ? wp_unslash($_POST['ls_equipment_links']) : array();
                                     $data['equipment_links'] = self::sanitise_equipment_links($raw_links, $slugs, $names);
                                 }
-                                if (isset($_POST['ls_unit_options'])) {
+                                if (isset($_POST['ls_unit_options_present'])) {
                                     $equipment_for_options = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
                                     $option_slugs = array_map(static function ($e) { return (string)$e->slug; }, $equipment_for_options);
                                     $option_models = array_map(static function ($m) { return (string)$m['name']; }, $data['model_profiles'] ?? array());
@@ -569,16 +569,18 @@ final class LS_Armoury {
             $models = isset($data['model_profiles']) && is_array($data['model_profiles']) ? $data['model_profiles'] : array();
             if (!$models) { $models = array(array('name'=>(string)$record->title, 'characteristics'=>$profile)); }
             $form .= '<p class="description">Each row represents a model type. Blank names are ignored. Up to 20 model profiles per unit.</p>';
-            for ($i=0; $i<max(3, count($models)+1); $i++) {
+            $form .= '<input type="hidden" name="ls_model_profiles_present" value="1"><div class="ls-dynamic-list" data-ls-list="models" data-ls-limit="20">';
+            for ($i=0; $i<max(1, count($models)); $i++) {
                 if ($i >= 20) { break; }
                 $model = $models[$i] ?? array();
                 $stats = isset($model['characteristics']) && is_array($model['characteristics']) ? $model['characteristics'] : array();
-                $form .= '<fieldset class="ls-model-profile"><legend>Model ' . ($i+1) . '</legend><label>Model name <input maxlength="100" name="ls_model_profiles[' . $i . '][name]" value="' . esc_attr((string)($model['name'] ?? '')) . '"></label><div class="ls-profile-grid">';
+                $form .= '<fieldset class="ls-model-profile" data-ls-row><legend>Model ' . ($i+1) . '</legend><button type="button" class="button ls-remove-row" data-ls-remove>Remove model</button><label>Model name <input maxlength="100" name="ls_model_profiles[' . $i . '][name]" value="' . esc_attr((string)($model['name'] ?? '')) . '"></label><div class="ls-profile-grid">';
                 foreach (self::datasheet_fields() as $key=>$label) {
                     $form .= '<label>' . esc_html($label) . '<input maxlength="32" name="ls_model_profiles[' . $i . '][' . esc_attr($key) . ']" value="' . esc_attr((string)($stats[$key] ?? '')) . '"></label>';
                 }
                 $form .= '</div></fieldset>';
             }
+            $form .= '</div><button type="button" class="button" data-ls-add="models">Add model profile</button>';
             $form .= '</section><section class="ls-workbench-panel" data-ls-panel="composition"><h3>Unit composition</h3>';
             $composition = isset($data['composition']) && is_array($data['composition']) ? $data['composition'] : array();
             $form .= '<div class="ls-profile-grid">';
@@ -588,20 +590,23 @@ final class LS_Armoury {
             $form .= '</div></section><section class="ls-workbench-panel" data-ls-panel="wargear"><h3>Wargear and weapon assignments</h3><p>Choose reusable equipment from this ruleset. Assign to the whole unit or one model profile.</p>';
             $equipment = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
             $links = isset($data['equipment_links']) && is_array($data['equipment_links']) ? $data['equipment_links'] : array();
-            for ($i=0; $i<max(3, min(40, count($links)+1)); $i++) {
+            $form .= '<input type="hidden" name="ls_equipment_links_present" value="1"><div class="ls-dynamic-list" data-ls-list="wargear" data-ls-limit="40">';
+            for ($i=0; $i<max(1, min(40, count($links))); $i++) {
                 $link = $links[$i] ?? array();
-                $form .= '<p><label>Wargear <select name="ls_equipment_links[' . $i . '][slug]"><option value="">— None —</option>';
+                $form .= '<p data-ls-row><label>Wargear <select name="ls_equipment_links[' . $i . '][slug]"><option value="">— None —</option>';
                 foreach ($equipment as $item) { $form .= '<option value="' . esc_attr($item->slug) . '" ' . selected($link['slug'] ?? '', $item->slug, false) . '>' . esc_html($item->title) . '</option>'; }
                 $form .= '</select></label> <label>Assigned to <select name="ls_equipment_links[' . $i . '][model]"><option value="">Whole unit</option>';
                 foreach ($models as $model) { $name = (string)($model['name'] ?? ''); if ($name !== '') { $form .= '<option value="' . esc_attr($name) . '" ' . selected($link['model'] ?? '', $name, false) . '>' . esc_html($name) . '</option>'; } }
-                $form .= '</select></label></p>';
+                $form .= '</select></label> <button type="button" class="button ls-remove-row" data-ls-remove>Remove assignment</button></p>';
             }
+            $form .= '</div><button type="button" class="button" data-ls-add="wargear">Add wargear assignment</button>';
             $form .= '</section><section class="ls-workbench-panel" data-ls-panel="upgrades"><h3>Upgrade options and points</h3><p class="description"><strong>Every upgrade needs a Name.</strong> For an exchange, choose Exchange equipment and select both weapons. Equipment choices show only records from this unit’s ruleset release (ID ' . (int)$record->release_id . '). Blank unused rows are ignored; maximum 30 options.</p>';
             $unit_options = isset($data['unit_options']) && is_array($data['unit_options']) ? $data['unit_options'] : array();
-            for ($i=0; $i<max(3, min(30, count($unit_options)+1)); $i++) {
+            $form .= '<input type="hidden" name="ls_unit_options_present" value="1"><div class="ls-dynamic-list" data-ls-list="upgrades" data-ls-limit="30">';
+            for ($i=0; $i<max(1, min(30, count($unit_options))); $i++) {
                 $opt = $unit_options[$i] ?? array();
                 $prefix = 'ls_unit_options[' . $i . ']';
-                $form .= '<fieldset class="ls-model-profile"><legend>Option ' . ($i+1) . '</legend><div class="ls-profile-grid">';
+                $form .= '<fieldset class="ls-model-profile" data-ls-row><legend>Option ' . ($i+1) . '</legend><button type="button" class="button ls-remove-row" data-ls-remove>Remove option</button><div class="ls-profile-grid">';
                 $form .= '<label>Name <input maxlength="100" name="' . $prefix . '[name]" value="' . esc_attr((string)($opt['name'] ?? '')) . '"></label>';
                 $form .= '<label>Type <select name="' . $prefix . '[type]">';
                 foreach (array('add'=>'Add equipment','replace'=>'Exchange equipment','model'=>'Additional model') as $value=>$label) { $form .= '<option value="' . esc_attr($value) . '" ' . selected($opt['type'] ?? 'add', $value, false) . '>' . esc_html($label) . '</option>'; }
@@ -619,6 +624,7 @@ final class LS_Armoury {
                 }
                 $form .= '</div></fieldset>';
             }
+            $form .= '</div><button type="button" class="button" data-ls-add="upgrades">Add upgrade option</button>';
             $form .= '</section>';
         }
         $form .= '<button class="button button-primary" type="submit">Save changes</button></form>';
