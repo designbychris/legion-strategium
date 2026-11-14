@@ -31,3 +31,18 @@
 .ls-armoury-admin .ls-chambers .nav-tab-active {border-top:3px solid #c9a052;padding-top:7px;color:#201d19;}
 .ls-armoury-admin .ls-chamber-content {padding:5px 0 20px;}
 @media(max-width:782px){.ls-armoury-admin .ls-chambers .nav-tab{flex:1 1 auto;text-align:center;}}
+
+/* II.4B: compact, progressively enhanced datasheet workbench. */
+.ls-armoury-admin .ls-workbench-tabs {display:flex;gap:4px;flex-wrap:wrap;margin:18px 0 0;border-bottom:2px solid #c9a052;}
+.ls-armoury-admin .ls-workbench-tab {background:#f3eee5;border:1px solid #c8bba5;border-bottom:0;color:#29251f;padding:11px 15px;cursor:pointer;font-weight:600;}
+.ls-armoury-admin .ls-workbench-tab.is-active {background:#201d19;color:#f3d69c;border-color:#201d19;}
+.ls-armoury-admin .ls-workbench-tab:focus-visible {outline:2px solid #3858e9;outline-offset:2px;}
+.ls-armoury-admin .ls-workbench-panel {padding:16px;background:#faf8f4;border:1px solid #d7c9a9;border-top:0;}
+.ls-armoury-admin .ls-workbench-panel[hidden] {display:none!important;}
+.ls-armoury-admin .ls-workbench-panel h3 {margin:0 0 12px;color:#201d19;}
+.ls-armoury-admin .ls-workbench-panel[data-ls-panel="models"] .ls-model-profile {overflow-x:auto;background:white;border-left:3px solid #c9a052;}
+.ls-armoury-admin .ls-workbench-panel[data-ls-panel="models"] .ls-profile-grid {grid-template-columns:repeat(14,minmax(78px,1fr));min-width:1120px;gap:6px;}
+.ls-armoury-admin .ls-workbench-panel[data-ls-panel="models"] .ls-profile-grid label {font-size:11px;font-weight:600;}
+.ls-armoury-admin .ls-workbench-panel[data-ls-panel="models"] .ls-profile-grid input {min-width:0;font-size:13px;}
+.ls-armoury-admin .ls-workbench-panel[data-ls-panel="models"] .ls-model-profile>label input {width:min(100%,360px);}
+@media(max-width:782px){.ls-armoury-admin .ls-workbench-tab{flex:1 1 40%;}.ls-armoury-admin .ls-workbench-panel{padding:10px;}}

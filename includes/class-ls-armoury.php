@@ -15,6 +15,7 @@ final class LS_Armoury {
     public static function admin_assets(string $hook): void {
         if ($hook === 'toplevel_page_legion-strategium') {
             wp_enqueue_style('ls-armoury-admin', LS_URL . 'assets/armoury-admin.css', array(), LS_VERSION);
+            wp_enqueue_script('ls-datasheet-editor', LS_URL . 'assets/datasheet-editor.js', array(), LS_VERSION, true);
         }
     }
 
@@ -550,16 +551,24 @@ final class LS_Armoury {
             $form .= self::rule_link_fields($record, $data);
         }
         if ($kind === 'unit') {
-            $form .= self::rule_link_fields($record, $data);
+            // Panels remain visible without JavaScript. The enhancement switches tabs client-side.
+            $form = str_replace('<form method="post"', '<form class="ls-unit-workbench" method="post"', $form);
+            $form .= '<nav class="ls-workbench-tabs" aria-label="Datasheet editor sections">';
+            foreach (array('overview'=>'Overview', 'models'=>'Model Profiles', 'composition'=>'Composition', 'wargear'=>'Wargear', 'upgrades'=>'Upgrades', 'rules'=>'Special Rules') as $key=>$label) {
+                $form .= '<button type="button" class="ls-workbench-tab" data-ls-tab="' . esc_attr($key) . '">' . esc_html($label) . '</button>';
+            }
+            $form .= '</nav><div class="ls-workbench-panel" data-ls-panel="overview"><h3>Unit overview</h3><p class="description">Edit the unit name, faction, role and base points above.</p>';
+            $form .= '<div class="ls-profile-fields"><strong>Characteristics (legacy profile)</strong><div class="ls-profile-grid">';
             $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
-            $form .= '<div class="ls-profile-fields"><strong>Characteristics</strong><div class="ls-profile-grid">';
             foreach (self::profile_fields() as $key => $label) {
                 $form .= '<label>' . esc_html($label) . '<input maxlength="32" name="ls_profile[' . esc_attr($key) . ']" value="' . esc_attr((string)($profile[$key] ?? '')) . '" placeholder="—"></label>';
             }
-            $form .= '</div></div>';
+            $form .= '</div></div></div><section class="ls-workbench-panel" data-ls-panel="rules"><h3>Special rules and traits</h3>';
+            $form .= self::rule_link_fields($record, $data);
+            $form .= '</section><section class="ls-workbench-panel" data-ls-panel="models"><h3>Model profiles</h3>';
             $models = isset($data['model_profiles']) && is_array($data['model_profiles']) ? $data['model_profiles'] : array();
             if (!$models) { $models = array(array('name'=>(string)$record->title, 'characteristics'=>$profile)); }
-            $form .= '<details class="ls-sheet-panel" open><summary>Model profiles (multiple stat lines)</summary><p class="description">Each row represents a model type. Blank names are ignored. Up to 20 model profiles per unit.</p>';
+            $form .= '<p class="description">Each row represents a model type. Blank names are ignored. Up to 20 model profiles per unit.</p>';
             for ($i=0; $i<max(3, count($models)+1); $i++) {
                 if ($i >= 20) { break; }
                 $model = $models[$i] ?? array();
@@ -570,13 +579,13 @@ final class LS_Armoury {
                 }
                 $form .= '</div></fieldset>';
             }
-            $form .= '</details>';
+            $form .= '</section><section class="ls-workbench-panel" data-ls-panel="composition"><h3>Unit composition</h3>';
             $composition = isset($data['composition']) && is_array($data['composition']) ? $data['composition'] : array();
-            $form .= '<details class="ls-sheet-panel"><summary>Unit composition</summary><div class="ls-profile-grid">';
+            $form .= '<div class="ls-profile-grid">';
             foreach (array('minimum_models'=>'Minimum models','maximum_models'=>'Maximum models','starting_models'=>'Starting models','additional_model_points'=>'Additional model points') as $key=>$label) {
                 $form .= '<label>' . esc_html($label) . '<input type="number" min="0" max="100000" name="ls_composition[' . esc_attr($key) . ']" value="' . esc_attr(isset($composition[$key]) ? (string)$composition[$key] : '') . '"></label>';
             }
-            $form .= '</div></details><details class="ls-sheet-panel"><summary>Wargear and weapon assignments</summary><p>Choose reusable equipment from this ruleset. Assign to the whole unit or one model profile.</p>';
+            $form .= '</div></section><section class="ls-workbench-panel" data-ls-panel="wargear"><h3>Wargear and weapon assignments</h3><p>Choose reusable equipment from this ruleset. Assign to the whole unit or one model profile.</p>';
             $equipment = self::rows('wargear', 'release_id = %d', array((int)$record->release_id));
             $links = isset($data['equipment_links']) && is_array($data['equipment_links']) ? $data['equipment_links'] : array();
             for ($i=0; $i<max(3, min(40, count($links)+1)); $i++) {
@@ -587,7 +596,7 @@ final class LS_Armoury {
                 foreach ($models as $model) { $name = (string)($model['name'] ?? ''); if ($name !== '') { $form .= '<option value="' . esc_attr($name) . '" ' . selected($link['model'] ?? '', $name, false) . '>' . esc_html($name) . '</option>'; } }
                 $form .= '</select></label></p>';
             }
-            $form .= '</details><details class="ls-sheet-panel"><summary>Upgrade options and points</summary><p class="description"><strong>Every upgrade needs a Name.</strong> For an exchange, choose Exchange equipment and select both weapons. Equipment choices show only records from this unit’s ruleset release (ID ' . (int)$record->release_id . '). Blank unused rows are ignored; maximum 30 options.</p>';
+            $form .= '</section><section class="ls-workbench-panel" data-ls-panel="upgrades"><h3>Upgrade options and points</h3><p class="description"><strong>Every upgrade needs a Name.</strong> For an exchange, choose Exchange equipment and select both weapons. Equipment choices show only records from this unit’s ruleset release (ID ' . (int)$record->release_id . '). Blank unused rows are ignored; maximum 30 options.</p>';
             $unit_options = isset($data['unit_options']) && is_array($data['unit_options']) ? $data['unit_options'] : array();
             for ($i=0; $i<max(3, min(30, count($unit_options)+1)); $i++) {
                 $opt = $unit_options[$i] ?? array();
@@ -610,7 +619,7 @@ final class LS_Armoury {
                 }
                 $form .= '</div></fieldset>';
             }
-            $form .= '</details>';
+            $form .= '</section>';
         }
         $form .= '<button class="button button-primary" type="submit">Save changes</button></form>';
         $form .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Permanently delete this draft record?&quot;);">' . $base . '<input type="hidden" name="ls_operation" value="delete"><button type="submit" class="button button-link-delete">Delete draft ' . esc_html($kind) . '</button></form>';
