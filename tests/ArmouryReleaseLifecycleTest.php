@@ -20,7 +20,7 @@ final class ArmouryReleaseLifecycleTest extends TestCase {
     public function test_admin_has_nonce_protected_transition_and_keeps_clone(): void {
         $source = file_get_contents(dirname(__DIR__) . '/includes/class-ls-armoury.php');
         self::assertStringContainsString("check_admin_referer('ls_armoury_release_transition')", $source);
-        self::assertStringContainsString("'status'=>$status", $source);
+        self::assertStringContainsString("'status'=>\$status", $source);
         self::assertStringContainsString("'ls_armoury_clone'", $source);
     }
 }
