@@ -7,6 +7,7 @@ final class LS_Muster {
         add_action('admin_post_ls_muster_rename', array(__CLASS__, 'rename'));
         add_action('admin_post_ls_muster_unit', array(__CLASS__, 'change_unit'));
         add_action('admin_post_ls_muster_allowance', array(__CLASS__, 'change_allowance'));
+        add_action('admin_post_ls_muster_detachment', array(__CLASS__, 'change_detachment'));
     }
     public static function table(string $name): string { return LS_Schema::table($name); }
     public static function return_url(): string {
@@ -135,6 +136,82 @@ final class LS_Muster {
         ksort($counts, SORT_NATURAL | SORT_FLAG_CASE);
         return array('roles'=>$counts, 'unassigned'=>$unassigned);
     }
+    /** Only definitions from this army's release can be selected. */
+    public static function detachment_catalogue(int $release_id): array {
+        global $wpdb;
+        return $wpdb->get_results($wpdb->prepare('SELECT id, slug, title, data FROM ' . self::table('detachments') . ' WHERE release_id = %d ORDER BY title, id', $release_id)) ?: array();
+    }
+    /** Detachment instances are roster-owned; catalogue definitions are copied when added. */
+    public static function detachment_review(array $roster): array {
+        $detachments = isset($roster['detachments']) && is_array($roster['detachments']) ? $roster['detachments'] : array();
+        $ids = array();
+        foreach ($detachments as $item) {
+            if (!is_array($item) || empty($item['id'])) { continue; }
+            $ids[(string)$item['id']] = $item;
+        }
+        $assigned = array_fill_keys(array_keys($ids), 0);
+        $unassigned = 0;
+        foreach ($roster['units'] ?? array() as $entry) {
+            if (!is_array($entry)) { continue; }
+            $quantity = (int)($entry['quantity'] ?? 0);
+            if ($quantity < 1 || $quantity > 100) { continue; }
+            $id = (string)($entry['detachment_id'] ?? '');
+            if ($id !== '' && isset($assigned[$id])) { $assigned[$id] += $quantity; }
+            else { $unassigned += $quantity; }
+        }
+        return array('assigned'=>$assigned, 'unassigned'=>$unassigned, 'fully_validated'=>false);
+    }
+    public static function change_detachment(): void {
+        if (!is_user_logged_in()) { wp_die(esc_html__('Sign in to edit an army.', 'legion-strategium')); }
+        check_admin_referer('ls_muster_detachment');
+        $army_id = isset($_POST['ls_army_id']) ? absint($_POST['ls_army_id']) : 0;
+        $operation = isset($_POST['ls_operation']) ? sanitize_key(wp_unslash((string)$_POST['ls_operation'])) : '';
+        if (!$army_id || !in_array($operation, array('add','remove','assign'), true)) { self::redirect('invalid_detachment'); }
+        global $wpdb;
+        $army = $wpdb->get_row($wpdb->prepare('SELECT id, release_id, roster FROM ' . self::table('armies') . ' WHERE id = %d AND user_id = %d', $army_id, get_current_user_id()));
+        if (!$army) { self::redirect('invalid_detachment'); }
+        $roster = self::roster_from_json((string)$army->roster);
+        $detachments = isset($roster['detachments']) && is_array($roster['detachments']) ? array_values($roster['detachments']) : array();
+        $instance = isset($_POST['ls_detachment_id']) && is_scalar($_POST['ls_detachment_id']) ? sanitize_key(wp_unslash((string)$_POST['ls_detachment_id'])) : '';
+        if ($operation === 'add') {
+            if (count($detachments) >= 20) { self::redirect('invalid_detachment'); }
+            $source_id = isset($_POST['ls_definition_id']) ? absint($_POST['ls_definition_id']) : 0;
+            $source = null;
+            foreach (self::detachment_catalogue((int)$army->release_id) as $definition) {
+                if ((int)$definition->id === $source_id) { $source = $definition; break; }
+            }
+            if (!$source) { self::redirect('invalid_detachment'); }
+            $data = json_decode((string)$source->data, true);
+            $detachments[] = array('id'=>wp_generate_uuid4(), 'source_id'=>(int)$source->id, 'slug'=>(string)$source->slug, 'title'=>(string)$source->title, 'source_data'=>is_array($data) ? $data : array());
+        } elseif ($operation === 'remove') {
+            $found = false;
+            foreach ($detachments as $i=>$item) {
+                if (($item['id'] ?? '') !== $instance || $instance === '') { continue; }
+                array_splice($detachments, $i, 1);
+                foreach ($roster['units'] as &$entry) {
+                    if (is_array($entry) && ($entry['detachment_id'] ?? '') === $instance) { unset($entry['detachment_id']); }
+                }
+                unset($entry);
+                $found = true; break;
+            }
+            if (!$found) { self::redirect('invalid_detachment'); }
+        } else {
+            $entry_id = isset($_POST['ls_entry_id']) && is_scalar($_POST['ls_entry_id']) ? sanitize_key(wp_unslash((string)$_POST['ls_entry_id'])) : '';
+            if ($instance !== '' && !in_array($instance, array_column($detachments, 'id'), true)) { self::redirect('invalid_detachment'); }
+            $found = false;
+            foreach ($roster['units'] as &$entry) {
+                if (!is_array($entry) || ($entry['entry_id'] ?? '') !== $entry_id || $entry_id === '') { continue; }
+                if ($instance === '') { unset($entry['detachment_id']); }
+                else { $entry['detachment_id'] = $instance; }
+                $found = true; break;
+            }
+            unset($entry);
+            if (!$found) { self::redirect('invalid_detachment'); }
+        }
+        $roster['detachments'] = $detachments;
+        $updated = $wpdb->update(self::table('armies'), array('roster'=>wp_json_encode($roster), 'updated_at'=>current_time('mysql', true)), array('id'=>$army_id, 'user_id'=>get_current_user_id()), array('%s','%s'), array('%d','%d'));
+        self::redirect($updated === false ? 'error_unit' : 'detachment_saved');
+    }
     /** Composition policy is intentionally absent until release-specific limits are authored. */
     public static function composition_review(array $roster): array {
         $summary = self::battlefield_role_summary($roster);
@@ -248,8 +325,25 @@ final class LS_Muster {
             foreach ($composition['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
             $out .= '</ul>';
         }
-        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Release-specific role limits and detachments are not yet validated; this is not a full legality check.</p></section></div>';
+        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Release-specific role limits and detachment requirements are not yet validated; this is not a full legality check.</p></section></div>';
 
+        $detachments = isset($roster['detachments']) && is_array($roster['detachments']) ? $roster['detachments'] : array();
+        $detachment_review = self::detachment_review($roster);
+        $out .= '<section class="ls-muster-detachments" aria-label="Army detachments"><h5>Army detachments</h5>';
+        if (!$detachments) { $out .= '<p class="ls-muted">No detachments selected yet.</p>'; }
+        foreach ($detachments as $item) {
+            if (!is_array($item) || empty($item['id'])) { continue; }
+            $out .= '<div class="ls-detachment-row"><strong>' . esc_html((string)($item['title'] ?? 'Detachment')) . '</strong> <span>' . (int)($detachment_review['assigned'][(string)$item['id']] ?? 0) . ' unit selections</span>';
+            $out .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_detachment"><input type="hidden" name="ls_operation" value="remove"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_detachment_id" value="' . esc_attr((string)$item['id']) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_detachment', '_wpnonce', true, false) . '<button class="ls-button ls-secondary" type="submit">Remove detachment</button></form></div>';
+        }
+        $definitions = self::detachment_catalogue((int)$army->release_id);
+        if ($definitions && count($detachments) < 20) {
+            $out .= '<form class="ls-detachment-add" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_detachment"><input type="hidden" name="ls_operation" value="add"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_detachment', '_wpnonce', true, false) . '<label>Detachment type <select name="ls_definition_id">';
+            foreach ($definitions as $definition) { $out .= '<option value="' . (int)$definition->id . '">' . esc_html((string)$definition->title) . '</option>'; }
+            $out .= '</select></label><button class="ls-button ls-secondary" type="submit">Add detachment</button></form>';
+        } elseif (!$definitions) { $out .= '<p class="ls-muted">No detachment definitions are available in this rules release yet. Definitions must be authored before detachments can be added.</p>'; }
+        if ($detachment_review['unassigned']) { $out .= '<p class="ls-muted">' . (int)$detachment_review['unassigned'] . ' unit selection(s) are not assigned to a detachment.</p>'; }
+        $out .= '<p class="ls-muted">Assignments are advisory. Detachment slots, role limits and other Third Edition requirements are not yet validated.</p></section>';
         if (empty($roster['units'])) { $out .= '<p class="ls-muted">No warriors assigned yet.</p>'; }
         foreach ($roster['units'] as $entry) {
             if (!is_array($entry)) { continue; }
@@ -259,6 +353,15 @@ final class LS_Muster {
             $configured_points = self::entry_points($entry);
             $out .= '<div class="ls-roster-entry"><div><strong>' . esc_html((string)($entry['title'] ?? 'Unit')) . '</strong><small>' . esc_html((string)$points) . ' pts each · ' . esc_html((string)$configured_points) . ' pts total</small></div>';
             $out .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="quantity"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false) . '<label>Quantity <input type="number" name="ls_quantity" min="1" max="100" value="' . $qty . '" required></label><button class="ls-button ls-secondary" type="submit">Update</button></form>';
+            if ($detachments) {
+                $out .= '<form class="ls-detachment-assign" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_detachment"><input type="hidden" name="ls_operation" value="assign"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_detachment', '_wpnonce', true, false) . '<label>Detachment <select name="ls_detachment_id"><option value="">Unassigned</option>';
+                foreach ($detachments as $item) {
+                    if (!is_array($item) || empty($item['id'])) { continue; }
+                    $selected = ($entry['detachment_id'] ?? '') === $item['id'] ? ' selected' : '';
+                    $out .= '<option value="' . esc_attr((string)$item['id']) . '"' . $selected . '>' . esc_html((string)($item['title'] ?? 'Detachment')) . '</option>';
+                }
+                $out .= '</select></label><button class="ls-button ls-secondary" type="submit">Assign</button></form>';
+            }
             $options = self::entry_options($entry);
             if ($options) {
                 $out .= '<form class="ls-roster-config" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="configure"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false);
@@ -290,7 +393,7 @@ final class LS_Muster {
         $armies = $wpdb->get_results($wpdb->prepare('SELECT a.id, a.title, a.release_id, a.roster, a.updated_at, r.version, e.title AS edition_title FROM ' . self::table('armies') . ' a LEFT JOIN ' . self::table('releases') . ' r ON r.id = a.release_id LEFT JOIN ' . self::table('editions') . ' e ON e.id = r.edition_id WHERE a.user_id = %d ORDER BY a.updated_at DESC, a.id DESC LIMIT 100', $user_id)) ?: array();
         $releases = self::available_releases();
         $notice = isset($_GET['ls_muster_notice']) ? sanitize_key(wp_unslash((string)$_GET['ls_muster_notice'])) : '';
-        $messages = array('created'=>'Army muster created.', 'renamed'=>'Army renamed.', 'invalid'=>'Please choose a valid title, published release and faction.', 'error'=>'Could not create the army. Please try again.', 'not_changed'=>'No changes were saved.', 'unit_saved'=>'Army roster updated.', 'invalid_unit'=>'Invalid unit, quantity or army. No changes were saved.', 'error_unit'=>'Could not save the roster. Please try again.', 'allowance_saved'=>'Points allowance saved.', 'invalid_allowance'=>'Invalid points allowance or army. No changes were saved.');
+        $messages = array('created'=>'Army muster created.', 'renamed'=>'Army renamed.', 'invalid'=>'Please choose a valid title, published release and faction.', 'error'=>'Could not create the army. Please try again.', 'not_changed'=>'No changes were saved.', 'unit_saved'=>'Army roster updated.', 'invalid_unit'=>'Invalid unit, quantity or army. No changes were saved.', 'error_unit'=>'Could not save the roster. Please try again.', 'allowance_saved'=>'Points allowance saved.', 'invalid_allowance'=>'Invalid points allowance or army. No changes were saved.', 'detachment_saved'=>'Army detachments updated.', 'invalid_detachment'=>'Invalid detachment selection. No changes were saved.');
         $out = '<section class="ls-muster" id="ls-muster"><p class="ls-kicker">THE MUSTER ROLLS</p><h3>My Armies</h3><p>Create a private army and choose its edition, rules release and faction. Select units from your faction catalogue and assemble your force below.</p>';
         if (isset($messages[$notice])) { $out .= '<p class="ls-notice" role="status">' . esc_html($messages[$notice]) . '</p>'; }
         $out .= '<div class="ls-muster-list">';
