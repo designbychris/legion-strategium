@@ -22,6 +22,6 @@ final class MusterRosterTest extends TestCase {
     public function test_roster_is_release_and_faction_scoped(): void {
         $php = file_get_contents(dirname(__DIR__) . '/includes/class-ls-muster.php');
         self::assertStringContainsString('WHERE release_id = %d AND faction_id = %d', $php);
-        self::assertStringContainsString("array('add', 'quantity', 'remove')", $php);
+        self::assertStringContainsString("array('add', 'quantity', 'remove', 'configure')", $php);
     }
 }

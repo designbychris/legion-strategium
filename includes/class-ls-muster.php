@@ -65,11 +65,47 @@ final class LS_Muster {
         if (!isset($roster['units']) || !is_array($roster['units'])) { $roster['units'] = array(); }
         return $roster;
     }
+    /** Options are taken only from the entry's frozen source datasheet. */
+    public static function entry_options(array $entry): array {
+        $data = $entry['source_data'] ?? array();
+        return is_array($data) && isset($data['unit_options']) && is_array($data['unit_options'])
+            ? array_values(array_filter(array_slice($data['unit_options'], 0, 30), 'is_array')) : array();
+    }
+    public static function entry_points(array $entry): int {
+        $base = max(0, (int)($entry['base_points'] ?? 0));
+        $quantity = max(1, min(100, (int)($entry['quantity'] ?? 1)));
+        $adjustment = 0;
+        $choices = isset($entry['choices']) && is_array($entry['choices']) ? $entry['choices'] : array();
+        foreach (self::entry_options($entry) as $index => $option) {
+            $count = isset($choices[$index]) ? (int)$choices[$index] : 0;
+            $adjustment += $count * (int)($option['points'] ?? 0);
+        }
+        return max(0, ($base + $adjustment) * $quantity);
+    }
+    /** Reject malformed counts and unknown options, never trust client-supplied points. */
+    public static function validated_choices(array $entry, $submitted) {
+        if (!is_array($submitted)) { return false; }
+        $options = self::entry_options($entry);
+        if (count($submitted) > count($options)) { return false; }
+        foreach ($submitted as $key => $value) {
+            if (!ctype_digit((string)$key) || !array_key_exists((int)$key, $options) || !is_scalar($value)) { return false; }
+        }
+        $choices = array();
+        foreach ($options as $index => $option) {
+            $raw = $submitted[$index] ?? 0;
+            $count = filter_var($raw, FILTER_VALIDATE_INT);
+            $minimum = max(0, (int)($option['min'] ?? 0));
+            $maximum = min(100, (int)($option['max'] ?? 0));
+            if ($count === false || $maximum < $minimum || $count < $minimum || $count > $maximum) { return false; }
+            $choices[$index] = $count;
+        }
+        return $choices;
+    }
     public static function roster_points(array $roster): int {
         $total = 0;
         foreach ($roster['units'] ?? array() as $entry) {
             if (!is_array($entry)) { continue; }
-            $total += max(0, (int)($entry['base_points'] ?? 0)) * max(1, (int)($entry['quantity'] ?? 1));
+            $total += self::entry_points($entry);
         }
         return $total;
     }
@@ -81,7 +117,7 @@ final class LS_Muster {
         $unit_id = isset($_POST['ls_unit_id']) ? absint($_POST['ls_unit_id']) : 0;
         $entry_id = isset($_POST['ls_entry_id']) ? sanitize_key(wp_unslash((string)$_POST['ls_entry_id'])) : '';
         $quantity = isset($_POST['ls_quantity']) ? filter_var(wp_unslash($_POST['ls_quantity']), FILTER_VALIDATE_INT) : false;
-        if (!$army_id || !in_array($operation, array('add', 'quantity', 'remove'), true)) { self::redirect('invalid_unit'); }
+        if (!$army_id || !in_array($operation, array('add', 'quantity', 'remove', 'configure'), true)) { self::redirect('invalid_unit'); }
         global $wpdb;
         $army = $wpdb->get_row($wpdb->prepare('SELECT id, release_id, roster FROM ' . self::table('armies') . ' WHERE id = %d AND user_id = %d', $army_id, get_current_user_id()));
         if (!$army) { self::redirect('invalid_unit'); }
@@ -97,14 +133,19 @@ final class LS_Muster {
             $data = json_decode((string)$source->data, true);
             $points = is_array($data) ? ($data['base_points'] ?? null) : null;
             if (!is_numeric($points) || (int)$points < 0 || (int)$points > 100000) { self::redirect('invalid_unit'); }
-            $units[] = array('entry_id'=>wp_generate_uuid4(), 'catalogue_unit_id'=>(int)$source->id, 'slug'=>(string)$source->slug, 'title'=>(string)$source->title, 'base_points'=>(int)$points, 'quantity'=>$quantity, 'source_data'=>is_array($data) ? $data : array());
+            $units[] = array('entry_id'=>wp_generate_uuid4(), 'catalogue_unit_id'=>(int)$source->id, 'slug'=>(string)$source->slug, 'title'=>(string)$source->title, 'base_points'=>(int)$points, 'quantity'=>$quantity, 'choices'=>array(), 'source_data'=>is_array($data) ? $data : array());
         } else {
             $found = false;
             foreach ($units as $index=>$entry) {
                 if (!is_array($entry) || ($entry['entry_id'] ?? '') !== $entry_id || $entry_id === '') { continue; }
                 $found = true;
                 if ($operation === 'remove') { array_splice($units, $index, 1); }
-                elseif ($quantity !== false && $quantity >= 1 && $quantity <= 100) { $units[$index]['quantity'] = $quantity; }
+                elseif ($operation === 'configure') {
+                    $raw = isset($_POST['ls_choices']) ? wp_unslash($_POST['ls_choices']) : array();
+                    $choices = self::validated_choices($entry, $raw);
+                    if ($choices === false) { self::redirect('invalid_unit'); }
+                    $units[$index]['choices'] = $choices;
+                } elseif ($quantity !== false && $quantity >= 1 && $quantity <= 100) { $units[$index]['quantity'] = $quantity; }
                 else { self::redirect('invalid_unit'); }
                 break;
             }
@@ -123,8 +164,23 @@ final class LS_Muster {
             $id = (string)($entry['entry_id'] ?? '');
             $qty = max(1, (int)($entry['quantity'] ?? 1));
             $points = max(0, (int)($entry['base_points'] ?? 0));
-            $out .= '<div class="ls-roster-entry"><div><strong>' . esc_html((string)($entry['title'] ?? 'Unit')) . '</strong><small>' . esc_html((string)$points) . ' pts each · ' . esc_html((string)($qty * $points)) . ' pts total</small></div>';
+            $configured_points = self::entry_points($entry);
+            $out .= '<div class="ls-roster-entry"><div><strong>' . esc_html((string)($entry['title'] ?? 'Unit')) . '</strong><small>' . esc_html((string)$points) . ' pts each · ' . esc_html((string)$configured_points) . ' pts total</small></div>';
             $out .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="quantity"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false) . '<label>Quantity <input type="number" name="ls_quantity" min="1" max="100" value="' . $qty . '" required></label><button class="ls-button ls-secondary" type="submit">Update</button></form>';
+            $options = self::entry_options($entry);
+            if ($options) {
+                $out .= '<form class="ls-roster-config" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="configure"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false);
+                $out .= '<fieldset><legend>Quartermaster options (per unit)</legend>';
+                foreach ($options as $index => $option) {
+                    $min = max(0, (int)($option['min'] ?? 0));
+                    $max = min(100, (int)($option['max'] ?? 0));
+                    $current = isset($entry['choices'][$index]) ? (int)$entry['choices'][$index] : 0;
+                    $current = max($min, min($max, $current));
+                    $label = (string)($option['name'] ?? 'Upgrade');
+                    $out .= '<label>' . esc_html($label . ' (' . (int)($option['points'] ?? 0) . ' pts)') . ' <input type="number" name="ls_choices[' . (int)$index . ']" min="' . $min . '" max="' . $max . '" value="' . $current . '" required></label>';
+                }
+                $out .= '</fieldset><button class="ls-button ls-secondary" type="submit">Save equipment &amp; upgrades</button></form>';
+            }
             $out .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="remove"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false) . '<button class="ls-button ls-secondary" type="submit">Remove</button></form></div>';
         }
         $sources = self::catalogue_units((int)$army->release_id, (int)($roster['faction_id'] ?? 0));
