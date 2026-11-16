@@ -6,6 +6,7 @@ final class LS_Muster {
         add_action('admin_post_ls_muster_create', array(__CLASS__, 'create'));
         add_action('admin_post_ls_muster_rename', array(__CLASS__, 'rename'));
         add_action('admin_post_ls_muster_unit', array(__CLASS__, 'change_unit'));
+        add_action('admin_post_ls_muster_allowance', array(__CLASS__, 'change_allowance'));
     }
     public static function table(string $name): string { return LS_Schema::table($name); }
     public static function return_url(): string {
@@ -109,6 +110,41 @@ final class LS_Muster {
         }
         return $total;
     }
+    /** Optional commander-defined points ceiling; zero means no limit selected. */
+    public static function points_allowance(array $roster): int {
+        $value = $roster['points_allowance'] ?? 0;
+        if (!is_int($value) && !(is_string($value) && ctype_digit($value))) { return 0; }
+        $limit = (int)$value;
+        return $limit >= 0 && $limit <= 100000 ? $limit : 0;
+    }
+    /** Advisory checks: never prevent a commander from saving a work-in-progress. */
+    public static function muster_review(array $roster): array {
+        $total = self::roster_points($roster);
+        $limit = self::points_allowance($roster);
+        $issues = array();
+        if ($limit > 0 && $total > $limit) { $issues[] = 'Over the points allowance by ' . ($total - $limit) . ' pts.'; }
+        if (empty($roster['units'])) { $issues[] = 'No units have been added yet.'; }
+        foreach ($roster['units'] ?? array() as $index => $entry) {
+            if (!is_array($entry) || empty($entry['entry_id']) || empty($entry['title']) || !isset($entry['base_points']) || !is_numeric($entry['base_points']) || (float)$entry['base_points'] < 0 || !isset($entry['quantity']) || !is_numeric($entry['quantity']) || (int)$entry['quantity'] < 1 || (int)$entry['quantity'] > 100) {
+                $issues[] = 'Roster entry ' . ((int)$index + 1) . ' has incomplete or invalid data.';
+            }
+        }
+        return array('total'=>$total, 'allowance'=>$limit, 'remaining'=>$limit > 0 ? $limit - $total : null, 'issues'=>$issues);
+    }
+    public static function change_allowance(): void {
+        if (!is_user_logged_in()) { wp_die(esc_html__('Sign in to edit an army.', 'legion-strategium')); }
+        check_admin_referer('ls_muster_allowance');
+        $army_id = isset($_POST['ls_army_id']) ? absint($_POST['ls_army_id']) : 0;
+        $raw = isset($_POST['ls_points_allowance']) && is_scalar($_POST['ls_points_allowance']) ? trim((string)wp_unslash($_POST['ls_points_allowance'])) : '';
+        if (!$army_id || !ctype_digit($raw) || (float)$raw > 100000) { self::redirect('invalid_allowance'); }
+        global $wpdb;
+        $army = $wpdb->get_row($wpdb->prepare('SELECT id, roster FROM ' . self::table('armies') . ' WHERE id = %d AND user_id = %d', $army_id, get_current_user_id()));
+        if (!$army) { self::redirect('invalid_allowance'); }
+        $roster = self::roster_from_json((string)$army->roster);
+        $roster['points_allowance'] = (int)$raw;
+        $updated = $wpdb->update(self::table('armies'), array('roster'=>wp_json_encode($roster), 'updated_at'=>current_time('mysql', true)), array('id'=>$army_id, 'user_id'=>get_current_user_id()), array('%s','%s'), array('%d','%d'));
+        self::redirect($updated === false ? 'error_unit' : 'allowance_saved');
+    }
     public static function change_unit(): void {
         if (!is_user_logged_in()) { wp_die(esc_html__('Sign in to edit an army.', 'legion-strategium')); }
         check_admin_referer('ls_muster_unit');
@@ -158,6 +194,21 @@ final class LS_Muster {
     public static function render_roster(object $army, array $roster, string $return): string {
         $total = self::roster_points($roster);
         $out = '<div class="ls-roster"><h4>Army roster <span>' . esc_html(number_format_i18n($total)) . ' pts</span></h4>';
+        $review = self::muster_review($roster);
+        $allowance = $review['allowance'];
+        $out .= '<div class="ls-muster-review"><h5>Praetor’s points review</h5>';
+        $out .= '<form class="ls-muster-allowance" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_allowance"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_allowance', '_wpnonce', true, false) . '<label>Points allowance <input type="number" name="ls_points_allowance" min="0" max="100000" step="1" value="' . (int)$allowance . '" required></label><button class="ls-button ls-secondary" type="submit">Save allowance</button></form>';
+        if ($allowance > 0) {
+            $remaining = $review['remaining'];
+            $out .= '<p class="ls-muster-balance">' . esc_html(number_format_i18n($total)) . ' / ' . esc_html(number_format_i18n($allowance)) . ' pts · ' . esc_html(number_format_i18n(abs($remaining))) . ($remaining < 0 ? ' pts over' : ' pts remaining') . '</p>';
+        } else { $out .= '<p class="ls-muted">No points allowance selected. Enter a limit above to check your muster.</p>'; }
+        if ($review['issues']) {
+            $out .= '<ul class="ls-muster-issues" aria-label="Muster review notices">';
+            foreach ($review['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
+            $out .= '</ul>';
+        } else { $out .= '<p class="ls-muster-points-ok">Points and basic roster checks passed.</p>'; }
+        $out .= '<p class="ls-muted">Advisory review only. Detachments, battlefield roles and other army restrictions are not yet validated.</p></div>';
+
         if (empty($roster['units'])) { $out .= '<p class="ls-muted">No warriors assigned yet.</p>'; }
         foreach ($roster['units'] as $entry) {
             if (!is_array($entry)) { continue; }
@@ -198,7 +249,7 @@ final class LS_Muster {
         $armies = $wpdb->get_results($wpdb->prepare('SELECT a.id, a.title, a.release_id, a.roster, a.updated_at, r.version, e.title AS edition_title FROM ' . self::table('armies') . ' a LEFT JOIN ' . self::table('releases') . ' r ON r.id = a.release_id LEFT JOIN ' . self::table('editions') . ' e ON e.id = r.edition_id WHERE a.user_id = %d ORDER BY a.updated_at DESC, a.id DESC LIMIT 100', $user_id)) ?: array();
         $releases = self::available_releases();
         $notice = isset($_GET['ls_muster_notice']) ? sanitize_key(wp_unslash((string)$_GET['ls_muster_notice'])) : '';
-        $messages = array('created'=>'Army muster created.', 'renamed'=>'Army renamed.', 'invalid'=>'Please choose a valid title, published release and faction.', 'error'=>'Could not create the army. Please try again.', 'not_changed'=>'No changes were saved.', 'unit_saved'=>'Army roster updated.', 'invalid_unit'=>'Invalid unit, quantity or army. No changes were saved.', 'error_unit'=>'Could not save the roster. Please try again.');
+        $messages = array('created'=>'Army muster created.', 'renamed'=>'Army renamed.', 'invalid'=>'Please choose a valid title, published release and faction.', 'error'=>'Could not create the army. Please try again.', 'not_changed'=>'No changes were saved.', 'unit_saved'=>'Army roster updated.', 'invalid_unit'=>'Invalid unit, quantity or army. No changes were saved.', 'error_unit'=>'Could not save the roster. Please try again.', 'allowance_saved'=>'Points allowance saved.', 'invalid_allowance'=>'Invalid points allowance or army. No changes were saved.');
         $out = '<section class="ls-muster" id="ls-muster"><p class="ls-kicker">THE MUSTER ROLLS</p><h3>My Armies</h3><p>Create a private army and choose its edition, rules release and faction. Select units from your faction catalogue and assemble your force below.</p>';
         if (isset($messages[$notice])) { $out .= '<p class="ls-notice" role="status">' . esc_html($messages[$notice]) . '</p>'; }
         $out .= '<div class="ls-muster-list">';

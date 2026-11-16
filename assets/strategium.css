@@ -72,3 +72,13 @@
 @media(max-width:760px){.ls-shell .ls-muster-form{grid-template-columns:repeat(2,minmax(0,1fr))}.ls-shell .ls-muster-form label:first-of-type{grid-column:1/-1}.ls-shell .ls-roster-add{grid-template-columns:minmax(0,1fr) 105px}.ls-shell .ls-roster-add button{grid-column:1/-1;justify-self:start}}
 @media(max-width:520px){.ls-shell .ls-muster{padding:1rem}.ls-shell .ls-muster-form{grid-template-columns:minmax(0,1fr)}.ls-shell .ls-muster-form label:first-of-type{grid-column:auto}.ls-shell .ls-roster-entry{grid-template-columns:minmax(0,1fr)}.ls-shell .ls-roster-entry>div,.ls-shell .ls-roster-entry>form.ls-roster-config{grid-column:1}.ls-shell .ls-roster-entry>form{justify-content:flex-start}.ls-shell .ls-roster-add{grid-template-columns:minmax(0,1fr)}.ls-shell .ls-roster-add button{grid-column:auto}.ls-shell .ls-roster>h4 span{margin-left:0}}
 @media(prefers-reduced-motion:reduce){.ls-shell .ls-muster form button.ls-button{transition:none}}
+
+/* II.5D.1 — advisory points review; army editing remains available when over limit. */
+.ls-shell .ls-muster-review{padding:1rem;margin:0 0 1.2rem;border:1px solid #94744a;border-radius:7px;background:#332b21}
+.ls-shell .ls-muster-review h5{margin:0 0 .8rem;color:#f3d18a;font-size:1.05rem}
+.ls-shell .ls-muster-review .ls-muster-allowance{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem}
+.ls-shell .ls-muster-review .ls-muster-allowance label{flex:0 1 220px;min-width:150px}
+.ls-shell .ls-muster-review .ls-muster-balance{margin:.9rem 0;font-weight:700;color:#f5d28f}
+.ls-shell .ls-muster-review .ls-muster-issues{padding-left:1.3rem;color:#ffcbab;line-height:1.7}
+.ls-shell .ls-muster-review .ls-muster-points-ok{color:#d6eabf;font-weight:600}
+.ls-shell .ls-muster-review .ls-muted{font-size:.88rem}
