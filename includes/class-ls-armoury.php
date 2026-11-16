@@ -7,6 +7,7 @@ final class LS_Armoury {
         add_action('admin_post_ls_armoury_manage', array(__CLASS__, 'manage'));
         add_action('admin_post_ls_armoury_publish', array(__CLASS__, 'publish'));
         add_action('admin_post_ls_armoury_clone', array(__CLASS__, 'clone_release'));
+        add_action('admin_post_ls_armoury_release_transition', array(__CLASS__, 'transition_release'));
         add_action('admin_post_ls_armoury_delete_release', array(__CLASS__, 'delete_release'));
         add_action('admin_post_ls_rule_save', array(__CLASS__, 'rule_save'));
         add_action('admin_post_ls_rule_delete', array(__CLASS__, 'rule_delete'));
@@ -247,7 +248,7 @@ final class LS_Armoury {
         }
         wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>'rules','ls_armoury_notice'=>$notice), admin_url('admin.php'))); exit;
     }
-    /** Publishing is one-way. Further rules changes require a separate draft release. */
+    /** Publication locks catalogue edits; safe lifecycle changes are handled separately. */
     public static function publish(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         check_admin_referer('ls_armoury_publish');
@@ -265,6 +266,42 @@ final class LS_Armoury {
         }
         $context = self::browse_context($_POST);
         wp_safe_redirect(add_query_arg(array_merge(array('page'=>'legion-strategium','ls_chamber'=>'releases','ls_armoury_notice'=>$notice), $context), admin_url('admin.php')));
+        exit;
+    }
+
+    /** Preserve all used releases. Only an unused publication may return to draft. */
+    public static function release_transition_allowed(int $id, string $target, string $status, bool $used): bool {
+        if ($id <= 0) { return false; }
+        if ($target === 'draft') { return $status === 'published' && !$used; }
+        if ($target === 'retired') { return $status === 'published'; }
+        if ($target === 'published') { return $status === 'retired'; }
+        return false;
+    }
+
+    /** Transitions never modify army records, battle snapshots or catalogue content. */
+    public static function transition_release_data(int $id, string $target): bool {
+        if ($id <= 0 || !in_array($target, array('draft', 'retired', 'published'), true)) { return false; }
+        global $wpdb;
+        $table = LS_Schema::table('releases');
+        $status = $wpdb->get_var($wpdb->prepare('SELECT status FROM ' . $table . ' WHERE id = %d', $id));
+        if (!is_string($status)) { return false; }
+        $used = self::release_has_armies($id);
+        if (!self::release_transition_allowed($id, $target, $status, $used)) { return false; }
+        // An army is the parent of each battle: preserving all armies preserves their battle links.
+        $where = array('id'=>$id, 'status'=>$status);
+        $values = array('status'=>$target);
+        $formats = array('%s');
+        if ($target === 'draft') { $values['published_at'] = null; $formats[] = '%s'; }
+        return $wpdb->update($table, $values, $where, $formats, array('%d','%s')) === 1;
+    }
+
+    public static function transition_release(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_armoury_release_transition');
+        $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
+        $target = isset($_POST['ls_target']) && is_scalar($_POST['ls_target']) ? sanitize_key(wp_unslash((string)$_POST['ls_target'])) : '';
+        $notice = self::transition_release_data($id, $target) ? 'release_transitioned' : 'release_transition_blocked';
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium', 'ls_chamber'=>'releases', 'ls_armoury_notice'=>$notice), admin_url('admin.php')));
         exit;
     }
 
@@ -713,11 +750,15 @@ final class LS_Armoury {
         echo '</nav>';
     }
 
+    public static function release_transition_form(int $id, string $target, string $label, string $confirmation): string {
+        return '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(' . esc_attr(wp_json_encode($confirmation)) . ')"><input type="hidden" name="action" value="ls_armoury_release_transition"><input type="hidden" name="ls_id" value="' . $id . '"><input type="hidden" name="ls_target" value="' . esc_attr($target) . '">' . wp_nonce_field('ls_armoury_release_transition', '_wpnonce', true, false) . '<button class="button" type="submit">' . esc_html($label) . '</button></form>';
+    }
+
     public static function admin(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','release_transitioned'=>'Release status updated; existing army and battle records were preserved.','release_transition_blocked'=>'Release status unchanged. Used releases cannot return to draft; clone a new draft for FAQ corrections.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
         $chambers = array('editions'=>'Editions', 'releases'=>'Releases', 'factions'=>'Factions', 'units'=>'Units', 'wargear'=>'Weapons & Wargear', 'rules'=>'Rules & Traits');
         $chamber = self::admin_chamber($_GET);
         echo '<nav class="nav-tab-wrapper ls-chambers" aria-label="Armoury chambers">';
@@ -766,12 +807,21 @@ final class LS_Armoury {
         self::index_pagination('rules', $rule_index, $index_release, $index_search);
         }
         if ($chamber === 'releases') {
-        echo '<h2>Release publication</h2><p>Publishing permanently locks this release. Check all factions, units and points first. A release must contain at least one faction and unit.</p>';
+        echo '<h2>Release publication</h2><p>Publishing locks catalogue edits. Unused published releases can return to draft; releases used by armies must be cloned for FAQ revisions. Retired releases remain available to existing armies and battle records.</p>';
         foreach ($releases as $release) {
             $edition_title = 'Unknown edition';
             foreach ($editions as $edition) { if ((int)$edition->id === (int)$release->edition_id) { $edition_title = $edition->title; break; } }
             echo '<div class="ls-release-row"><strong>' . esc_html($edition_title . ' — ' . $release->version) . '</strong> <span>' . esc_html($release->status) . '</span>';
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_armoury_clone"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_clone', '_wpnonce', true, false) . '<label>New draft version <input required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" name="ls_version" placeholder="2026-draft-2"></label> <button class="button">Clone to draft</button></form>';
+            if ($release->status === 'published' || $release->status === 'retired') {
+                $has_armies = self::release_has_armies((int)$release->id);
+                if ($release->status === 'published' && !$has_armies) {
+                    echo self::release_transition_form((int)$release->id, 'draft', 'Return unused release to draft', 'Return this unused release to draft for editing?');
+                } elseif ($release->status === 'published') {
+                    echo '<p class="description">In use by armies: clone to a new draft to apply FAQ or errata changes.</p>';
+                }
+                echo self::release_transition_form((int)$release->id, $release->status === 'published' ? 'retired' : 'published', $release->status === 'published' ? 'Retire release' : 'Restore publication', $release->status === 'published' ? 'Retire this release? Existing armies and battles will be retained.' : 'Restore this retired release for new armies?');
+            }
             if ($release->status === 'draft') {
                 echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(&quot;Publish and permanently lock this release?&quot;);"><input type="hidden" name="action" value="ls_armoury_publish"><input type="hidden" name="ls_id" value="' . (int)$release->id . '">' . wp_nonce_field('ls_armoury_publish', '_wpnonce', true, false) . '<button class="button button-secondary">Publish release</button></form>';
             }
