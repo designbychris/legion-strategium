@@ -678,6 +678,41 @@ final class LS_Armoury {
         return array('edition'=>'editions', 'release'=>'releases', 'faction'=>'factions', 'unit'=>'units', 'wargear'=>'wargear')[$kind] ?? 'units';
     }
 
+    /** Release-aware index matching, shared by the wargear and rules chambers. */
+    public static function index_matches(array $records, int $release, string $search): array {
+        $search = trim($search);
+        return array_values(array_filter($records, static function ($record) use ($release, $search) {
+            if ($release > 0 && (int)$record->release_id !== $release) { return false; }
+            return $search === '' || stripos((string)$record->title, $search) !== false || stripos((string)$record->slug, $search) !== false;
+        }));
+    }
+
+    /** Clamp an index page and return its bounded records. */
+    public static function index_page(array $records, int $page, int $per_page = 20): array {
+        $per_page = max(1, min(100, $per_page));
+        $pages = max(1, (int)ceil(count($records) / $per_page));
+        $page = max(1, min($page, $pages));
+        return array('rows'=>array_slice($records, ($page - 1) * $per_page, $per_page), 'page'=>$page, 'pages'=>$pages, 'total'=>count($records));
+    }
+
+    private static function index_filters(string $chamber, array $releases, int $release, string $search): void {
+        echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="ls-catalogue-filters">';
+        echo '<input type="hidden" name="page" value="legion-strategium"><input type="hidden" name="ls_chamber" value="' . esc_attr($chamber) . '">';
+        echo '<label>Release <select name="ls_release">' . self::filter_options($releases, 'version', $release, 'All releases') . '</select></label> ';
+        echo '<label>Search <input type="search" name="ls_search" value="' . esc_attr($search) . '" placeholder="Name or slug"></label> ';
+        echo '<button class="button button-primary">Find records</button> <a class="button" href="' . esc_url(add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>$chamber), admin_url('admin.php'))) . '">Clear</a></form>';
+    }
+
+    private static function index_pagination(string $chamber, array $index, int $release, string $search): void {
+        if ($index['pages'] <= 1) { return; }
+        echo '<nav class="ls-pagination" aria-label="' . esc_attr(ucfirst($chamber)) . ' pages">';
+        for ($i = 1; $i <= $index['pages']; $i++) {
+            $url = add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>$chamber,'ls_release'=>$release,'ls_search'=>$search,'ls_page'=>$i), admin_url('admin.php'));
+            echo '<a class="button ' . ($i === $index['page'] ? 'button-primary' : '') . '" href="' . esc_url($url) . '">' . $i . '</a> ';
+        }
+        echo '</nav>';
+    }
+
     public static function admin(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
@@ -709,9 +744,13 @@ final class LS_Armoury {
         if ($chamber === 'rules') {
         echo '<h2>6. Codex of War — Rules and Traits</h2><p>Write only descriptions you are authorised to publish. Rules are independent for each release.</p>';
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_rule_save">' . wp_nonce_field('ls_rule_save', '_wpnonce', true, false) . '<label>Release <select name="ls_release">' . self::options($releases, 'version') . '</select></label> <label>Name <input name="ls_title" required></label> <label>Slug <input name="ls_slug"></label> <label>Type <select name="ls_rule[type]"><option value="special">Special rule</option><option value="trait">Trait</option><option value="weapon">Weapon rule</option><option value="unit">Unit rule</option></select></label><p><label>Description<br><textarea name="ls_rule[description]" rows="3" cols="70"></textarea></label></p><button class="button button-primary">Add rule</button></form>';
-        $rule_rows = self::rows('rules');
-        echo '<h3>Rule records (' . count($rule_rows) . ')</h3><table class="widefat striped"><thead><tr><th>Rule</th><th>Release</th><th>Manage</th></tr></thead><tbody>';
-        foreach ($rule_rows as $rule) {
+        $index_release = isset($_GET['ls_release']) ? absint($_GET['ls_release']) : 0;
+        $index_search = isset($_GET['ls_search']) && is_string($_GET['ls_search']) ? substr(sanitize_text_field(wp_unslash($_GET['ls_search'])), 0, 100) : '';
+        self::index_filters('rules', $releases, $index_release, $index_search);
+        $rule_rows = self::index_matches(self::rows('rules'), $index_release, $index_search);
+        $rule_index = self::index_page($rule_rows, isset($_GET['ls_page']) ? absint($_GET['ls_page']) : 1);
+        echo '<h3>Rule records (' . $rule_index['total'] . ' matching)</h3><table class="widefat striped"><thead><tr><th>Rule</th><th>Release</th><th>Manage</th></tr></thead><tbody>';
+        foreach ($rule_index['rows'] as $rule) {
             $rule_data = json_decode((string)$rule->data, true); $rule_data = is_array($rule_data) ? $rule_data : array();
             echo '<tr><td>' . esc_html($rule->title) . '</td><td>' . (int)$rule->release_id . '</td><td>';
             if (self::release_is_draft((int)$rule->release_id) && !self::release_has_armies((int)$rule->release_id)) {
@@ -722,7 +761,9 @@ final class LS_Armoury {
             } else { echo '<em>Locked</em>'; }
             echo '</td></tr>';
         }
+        if (!$rule_rows) { echo '<tr><td colspan="3">No rules match these filters.</td></tr>'; }
         echo '</tbody></table>';
+        self::index_pagination('rules', $rule_index, $index_release, $index_search);
         }
         if ($chamber === 'releases') {
         echo '<h2>Release publication</h2><p>Publishing permanently locks this release. Check all factions, units and points first. A release must contain at least one faction and unit.</p>';
@@ -759,9 +800,16 @@ final class LS_Armoury {
         $faction_names = array(); foreach ($factions as $f) { $faction_names[(int)$f->id] = $f->title; }
         $wargear = self::rows('wargear');
         if ($chamber === 'wargear') {
-        echo '<h2>Wargear records (' . count($wargear) . ')</h2><p>Equipment records are release-scoped and editable while draft.</p><table class="widefat striped"><thead><tr><th>Name</th><th>Release</th><th>Edit draft equipment</th></tr></thead><tbody>';
-        foreach ($wargear as $item) { echo '<tr><td>' . esc_html($item->title) . '</td><td>' . esc_html($release_names[(int)$item->release_id] ?? 'Unknown') . '</td><td>' . self::manage_form('wargear', $item, array()) . '</td></tr>'; }
+        $index_release = isset($_GET['ls_release']) ? absint($_GET['ls_release']) : 0;
+        $index_search = isset($_GET['ls_search']) && is_string($_GET['ls_search']) ? substr(sanitize_text_field(wp_unslash($_GET['ls_search'])), 0, 100) : '';
+        self::index_filters('wargear', $releases, $index_release, $index_search);
+        $matching = self::index_matches($wargear, $index_release, $index_search);
+        $gear_index = self::index_page($matching, isset($_GET['ls_page']) ? absint($_GET['ls_page']) : 1);
+        echo '<h2>Wargear records (' . $gear_index['total'] . ' matching)</h2><p>Equipment records are release-scoped and editable while draft.</p><table class="widefat striped"><thead><tr><th>Name</th><th>Release</th><th>Edit draft equipment</th></tr></thead><tbody>';
+        foreach ($gear_index['rows'] as $item) { echo '<tr><td>' . esc_html($item->title) . '</td><td>' . esc_html($release_names[(int)$item->release_id] ?? 'Unknown') . '</td><td>' . self::manage_form('wargear', $item, array()) . '</td></tr>'; }
+        if (!$matching) { echo '<tr><td colspan="3">No equipment matches these filters.</td></tr>'; }
         echo '</tbody></table>';
+        self::index_pagination('wargear', $gear_index, $index_release, $index_search);
         }
         if ($chamber === 'units' || $chamber === 'factions') {
         // Keep the release catalogue scoped before rendering any unit editor.
