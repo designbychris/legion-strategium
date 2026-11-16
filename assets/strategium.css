@@ -82,3 +82,11 @@
 .ls-shell .ls-muster-review .ls-muster-issues{padding-left:1.3rem;color:#ffcbab;line-height:1.7}
 .ls-shell .ls-muster-review .ls-muster-points-ok{color:#d6eabf;font-weight:600}
 .ls-shell .ls-muster-review .ls-muted{font-size:.88rem}
+
+/* II.5D.2: advisory battlefield-role summary, scoped to the Muster. */
+.ls-muster .ls-muster-roles{margin:20px 0 0;padding:15px 18px;border:1px solid rgba(202,160,84,.4);border-left:3px solid #c9a052;border-radius:4px;background:rgba(255,255,255,.035)}
+.ls-muster .ls-muster-roles h5{margin:0 0 12px;color:#e6bc69;font-size:1.05rem}
+.ls-muster .ls-muster-role-list{margin:0 0 12px;padding:0;list-style:none;display:grid;gap:8px}
+.ls-muster .ls-muster-role-list li{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:8px 11px;background:rgba(0,0,0,.16);border-radius:4px}
+.ls-muster .ls-muster-role-list strong{color:#f1cb80;font-variant-numeric:tabular-nums}
+.ls-muster .ls-muster-roles .ls-muted{line-height:1.55}

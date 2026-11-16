@@ -117,6 +117,33 @@ final class LS_Muster {
         $limit = (int)$value;
         return $limit >= 0 && $limit <= 100000 ? $limit : 0;
     }
+    /** Count unit selections by their saved datasheet battlefield role, not by live catalogue data.
+     * Quantities represent repeated unit selections; models and upgrades do not create new slots.
+     */
+    public static function battlefield_role_summary(array $roster): array {
+        $counts = array();
+        $unassigned = 0;
+        foreach ($roster['units'] ?? array() as $entry) {
+            if (!is_array($entry)) { continue; }
+            $data = isset($entry['source_data']) && is_array($entry['source_data']) ? $entry['source_data'] : array();
+            $role = isset($data['role']) && is_string($data['role']) ? trim($data['role']) : '';
+            $quantity = isset($entry['quantity']) && is_numeric($entry['quantity']) ? (int)$entry['quantity'] : 0;
+            if ($quantity < 1 || $quantity > 100) { continue; }
+            if ($role === '') { $unassigned += $quantity; continue; }
+            $counts[$role] = ($counts[$role] ?? 0) + $quantity;
+        }
+        ksort($counts, SORT_NATURAL | SORT_FLAG_CASE);
+        return array('roles'=>$counts, 'unassigned'=>$unassigned);
+    }
+    /** Composition policy is intentionally absent until release-specific limits are authored. */
+    public static function composition_review(array $roster): array {
+        $summary = self::battlefield_role_summary($roster);
+        $issues = array();
+        if ($summary['unassigned'] > 0) {
+            $issues[] = $summary['unassigned'] . ' unit selection(s) have no battlefield role in their saved datasheet.';
+        }
+        return array('summary'=>$summary, 'issues'=>$issues, 'limits_configured'=>false, 'fully_validated'=>false);
+    }
     /** Advisory checks: never prevent a commander from saving a work-in-progress. */
     public static function muster_review(array $roster): array {
         $total = self::roster_points($roster);
@@ -207,7 +234,21 @@ final class LS_Muster {
             foreach ($review['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
             $out .= '</ul>';
         } else { $out .= '<p class="ls-muster-points-ok">Points and basic roster checks passed.</p>'; }
-        $out .= '<p class="ls-muted">Advisory review only. Detachments, battlefield roles and other army restrictions are not yet validated.</p></div>';
+        $composition = self::composition_review($roster);
+        $out .= '<section class="ls-muster-roles" aria-label="Battlefield role summary"><h5>Battlefield roles</h5>';
+        if ($composition['summary']['roles']) {
+            $out .= '<ul class="ls-muster-role-list">';
+            foreach ($composition['summary']['roles'] as $role => $count) {
+                $out .= '<li><span>' . esc_html($role) . '</span><strong>' . (int)$count . '</strong></li>';
+            }
+            $out .= '</ul>';
+        } else { $out .= '<p class="ls-muted">No assigned battlefield roles yet.</p>'; }
+        if ($composition['issues']) {
+            $out .= '<ul class="ls-muster-issues" aria-label="Battlefield role notices">';
+            foreach ($composition['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
+            $out .= '</ul>';
+        }
+        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Release-specific role limits and detachments are not yet validated; this is not a full legality check.</p></section></div>';
 
         if (empty($roster['units'])) { $out .= '<p class="ls-muted">No warriors assigned yet.</p>'; }
         foreach ($roster['units'] as $entry) {
