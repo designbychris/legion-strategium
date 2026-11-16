@@ -101,3 +101,13 @@
 .ls-muster .ls-muster-detachments .ls-button{color:#f9e5bf;background:#302922;border:1px solid #b88845;min-height:40px}
 .ls-muster .ls-muster-detachments .ls-button:hover{background:#59452c;color:#fff}
 @media(max-width:600px){.ls-muster .ls-detachment-row form{margin-left:0}.ls-muster .ls-detachment-add label,.ls-muster .ls-detachment-assign label{width:100%}}
+
+/* II.5D.3A — explicit roster headings and readable Muster controls. */
+.ls-muster .ls-roster-unit-heading{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:.45rem!important;min-width:0;width:100%}
+.ls-muster .ls-roster-unit-heading strong{display:block!important;width:100%;line-height:1.45!important;margin:0!important}
+.ls-muster .ls-roster-unit-heading small{display:block!important;width:100%;line-height:1.5!important;margin:0!important}
+.ls-shell .ls-muster form button.ls-button:not(.ls-secondary){background:#d8b16b!important;color:#201a14!important;border-color:#d8b16b!important}
+.ls-shell .ls-muster form button.ls-button.ls-secondary{background:#473a2b!important;color:#fff0d5!important;border-color:#d8b16b!important}
+.ls-shell .ls-muster form button.ls-button:disabled{color:#f1e1c6!important;background:#544b40!important;border-color:#8b785e!important;opacity:.8!important}
+.ls-shell .ls-muster .ls-muster-army>strong{margin-bottom:.3rem!important}
+.ls-shell .ls-muster .ls-muster-army>span{margin-bottom:.65rem!important}

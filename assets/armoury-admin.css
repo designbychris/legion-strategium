@@ -95,3 +95,18 @@
 @media(max-width:960px){.ls-armoury-admin .ls-chambers .nav-tab{flex:1 1 27%;text-align:center}.ls-armoury-admin .ls-workbench-tab{flex:1 1 28%;text-align:center}.ls-armoury-admin .ls-profile-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}}
 @media(max-width:600px){.ls-armoury-admin h1{font-size:25px}.ls-armoury-admin .ls-chambers .nav-tab{flex:1 1 43%;padding:10px 7px}.ls-armoury-admin .ls-workbench-tab{flex:1 1 43%;padding:11px 7px}.ls-armoury-admin .ls-catalogue-filters label{flex:1 1 100%}.ls-armoury-admin .ls-catalogue-filters input,.ls-armoury-admin .ls-catalogue-filters select{width:100%;max-width:none}.ls-armoury-admin .ls-model-profile{padding:10px}.ls-armoury-admin .ls-remove-row{float:none;display:block;margin:4px 0 12px}}
 @media(prefers-reduced-motion:reduce){.ls-armoury-admin .ls-chambers .nav-tab,.ls-armoury-admin .ls-workbench-tab{transition:none}}
+
+/* II.5D.3A — Keeper's detachment authoring chamber. */
+.ls-armoury-admin .ls-detachment-release{margin:18px 0;padding:18px;border:1px solid #d8c8a9;border-left:4px solid #c9a052;border-radius:5px;background:#fffdf9}
+.ls-armoury-admin .ls-detachment-release h3{margin:0 0 14px}.ls-armoury-admin .ls-detachment-release h3 small{font-size:12px;color:#76634b}
+.ls-armoury-admin .ls-detachment-new,.ls-armoury-admin .ls-detachment-existing{padding:12px;margin:10px 0;border:1px solid #d8c8a9;border-radius:4px;background:#faf7f0}
+.ls-armoury-admin .ls-detachment-release summary{cursor:pointer;font-weight:700;color:#453726}
+.ls-armoury-admin .ls-detachment-editor{margin:14px 0 0}.ls-armoury-admin .ls-detachment-identity{display:flex;flex-wrap:wrap;gap:12px}
+.ls-armoury-admin .ls-detachment-identity label{display:grid;gap:5px;flex:1 1 220px;font-weight:600}
+.ls-armoury-admin .ls-detachment-identity input{width:100%}
+.ls-armoury-admin .ls-detachment-slots{display:grid;gap:7px;margin:16px 0}
+.ls-armoury-admin .ls-detachment-slot,.ls-armoury-admin .ls-detachment-slot-heading{display:grid;grid-template-columns:minmax(150px,1fr) 100px 100px;gap:10px;align-items:end}
+.ls-armoury-admin .ls-detachment-slot{padding:8px;background:#fff;border:1px solid #e4d9c6;border-radius:4px}
+.ls-armoury-admin .ls-detachment-slot label{display:grid;gap:4px;font-weight:600}.ls-armoury-admin .ls-detachment-slot label span{display:none}
+.ls-armoury-admin .ls-detachment-slot input{width:100%}
+@media(max-width:650px){.ls-armoury-admin .ls-detachment-slot-heading{display:none}.ls-armoury-admin .ls-detachment-slot{grid-template-columns:1fr 1fr}.ls-armoury-admin .ls-detachment-slot label:first-child{grid-column:1/-1}.ls-armoury-admin .ls-detachment-slot label span{display:block}}

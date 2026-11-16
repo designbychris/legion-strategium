@@ -4,6 +4,7 @@ if (!defined('ABSPATH')) { exit; }
 final class LS_Armoury {
     public static function boot(): void {
         add_action('admin_post_ls_armoury_save', array(__CLASS__, 'save'));
+        add_action('admin_post_ls_detachment_save', array(__CLASS__, 'save_detachment'));
         add_action('admin_post_ls_armoury_manage', array(__CLASS__, 'manage'));
         add_action('admin_post_ls_armoury_publish', array(__CLASS__, 'publish'));
         add_action('admin_post_ls_armoury_edition_transition', array(__CLASS__, 'transition_edition'));
@@ -743,7 +744,7 @@ final class LS_Armoury {
     /** Allowlisted server-side chamber routing; never trust arbitrary query values. */
     public static function admin_chamber(array $source): string {
         $value = isset($source['ls_chamber']) && is_string($source['ls_chamber']) ? $source['ls_chamber'] : 'units';
-        return in_array($value, array('editions', 'releases', 'factions', 'units', 'wargear', 'rules'), true) ? $value : 'units';
+        return in_array($value, array('editions', 'releases', 'factions', 'units', 'wargear', 'rules', 'detachments'), true) ? $value : 'units';
     }
 
     public static function chamber_for_kind(string $kind): string {
@@ -789,12 +790,87 @@ final class LS_Armoury {
         return '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(' . esc_attr(wp_json_encode($confirmation)) . ')"><input type="hidden" name="action" value="ls_armoury_release_transition"><input type="hidden" name="ls_id" value="' . $id . '"><input type="hidden" name="ls_target" value="' . esc_attr($target) . '">' . wp_nonce_field('ls_armoury_release_transition', '_wpnonce', true, false) . '<button class="button" type="submit">' . esc_html($label) . '</button></form>';
     }
 
+    /** Structured detachment slot definitions. No edition-specific role assumptions. */
+    public static function sanitise_detachment_slots($input): array {
+        if (!is_array($input)) { return array(); }
+        $slots = array();
+        foreach (array_slice($input, 0, 12) as $row) {
+            if (!is_array($row)) { continue; }
+            $role = isset($row['role']) && is_scalar($row['role']) ? trim(sanitize_text_field((string)$row['role'])) : '';
+            if ($role === '') { continue; }
+            $minimum = filter_var($row['min'] ?? null, FILTER_VALIDATE_INT);
+            $maximum = filter_var($row['max'] ?? null, FILTER_VALIDATE_INT);
+            if (strlen($role) > 80 || $minimum === false || $maximum === false || $minimum < 0 || $maximum < $minimum || $maximum > 100) { return array(); }
+            $slots[] = array('role'=>$role, 'min'=>$minimum, 'max'=>$maximum);
+        }
+        return $slots;
+    }
+    /** Only an unused draft release may have detachment definitions changed. */
+    public static function detachment_editable(int $release_id): bool {
+        return $release_id > 0 && self::release_is_draft($release_id) && !self::release_has_armies($release_id);
+    }
+    public static function save_detachment(): void {
+        if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
+        check_admin_referer('ls_detachment_save');
+        global $wpdb;
+        $id = isset($_POST['ls_detachment_id']) ? absint($_POST['ls_detachment_id']) : 0;
+        $release = isset($_POST['ls_release']) ? absint($_POST['ls_release']) : 0;
+        $title = isset($_POST['ls_title']) ? sanitize_text_field(wp_unslash((string)$_POST['ls_title'])) : '';
+        $slug = isset($_POST['ls_slug']) ? sanitize_title(wp_unslash((string)$_POST['ls_slug'])) : '';
+        $raw = isset($_POST['ls_slots']) && is_array($_POST['ls_slots']) ? wp_unslash($_POST['ls_slots']) : array();
+        $slots = self::sanitise_detachment_slots($raw);
+        $has_slot = false;
+        foreach ($raw as $row) { if (is_array($row) && !empty(trim((string)($row['role'] ?? '')))) { $has_slot = true; break; } }
+        $result = false;
+        if (self::detachment_editable($release) && $title !== '' && $slug !== '' && strlen($title) <= 190 && (!$has_slot || $slots)) {
+            $record = $id ? $wpdb->get_row($wpdb->prepare('SELECT id, release_id FROM ' . LS_Schema::table('detachments') . ' WHERE id = %d', $id)) : null;
+            if (!$id || ($record && (int)$record->release_id === $release)) {
+                $values = array('slug'=>$slug, 'title'=>$title, 'data'=>wp_json_encode(array('slots'=>$slots)));
+                if ($id) { $result = $wpdb->update(LS_Schema::table('detachments'), $values, array('id'=>$id,'release_id'=>$release), array('%s','%s','%s'), array('%d','%d')); }
+                else { $values['release_id'] = $release; $result = $wpdb->insert(LS_Schema::table('detachments'), $values, array('%s','%s','%s','%d')); }
+            }
+        }
+        wp_safe_redirect(add_query_arg(array('page'=>'legion-strategium','ls_chamber'=>'detachments','ls_armoury_notice'=>$result !== false ? 'detachment_saved' : 'detachment_invalid'), admin_url('admin.php')));
+        exit;
+    }
+    private static function detachment_fields(int $release, string $title, string $slug, array $slots, int $id = 0): string {
+        $out = '<form class="ls-detachment-editor" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_detachment_save"><input type="hidden" name="ls_release" value="' . $release . '"><input type="hidden" name="ls_detachment_id" value="' . $id . '">' . wp_nonce_field('ls_detachment_save', '_wpnonce', true, false);
+        $out .= '<div class="ls-detachment-identity"><label>Detachment name <input name="ls_title" maxlength="190" required value="' . esc_attr($title) . '"></label><label>Slug <input name="ls_slug" maxlength="100" required value="' . esc_attr($slug) . '"></label></div><p class="description">Define role slots for this rules release. Leave unused rows blank. Slot enforcement will arrive in a later validation phase.</p><div class="ls-detachment-slots"><div class="ls-detachment-slot-heading"><strong>Battlefield role</strong><strong>Minimum</strong><strong>Maximum</strong></div>';
+        for ($i = 0; $i < max(4, min(12, count($slots) + 1)); $i++) {
+            $slot = $slots[$i] ?? array();
+            $out .= '<div class="ls-detachment-slot"><label><span>Role</span><input name="ls_slots[' . $i . '][role]" maxlength="80" placeholder="e.g. a role from this release" value="' . esc_attr((string)($slot['role'] ?? '')) . '"></label><label><span>Minimum</span><input type="number" min="0" max="100" name="ls_slots[' . $i . '][min]" value="' . (int)($slot['min'] ?? 0) . '"></label><label><span>Maximum</span><input type="number" min="0" max="100" name="ls_slots[' . $i . '][max]" value="' . (int)($slot['max'] ?? 1) . '"></label></div>';
+        }
+        $out .= '</div><button class="button button-primary" type="submit">' . ($id ? 'Save detachment' : 'Create detachment') . '</button></form>';
+        return $out;
+    }
+    private static function detachment_chamber(array $releases): void {
+        echo '<h2>Detachment definitions</h2><p>Author release-specific detachment types and role slots. Published releases are read-only; clone to draft for FAQ changes. Slot validation is not yet enforced.</p>';
+        $records = self::rows('detachments');
+        foreach ($releases as $release) {
+            $release_id = (int)$release->id;
+            $editable = self::detachment_editable($release_id);
+            echo '<section class="ls-detachment-release"><h3>' . esc_html($release->version) . ' <small>— ' . esc_html($release->status) . '</small></h3>';
+            if ($editable) { echo '<details class="ls-detachment-new"><summary>Add detachment definition</summary>' . self::detachment_fields($release_id, '', '', array()) . '</details>'; }
+            foreach ($records as $record) {
+                if ((int)$record->release_id !== $release_id) { continue; }
+                $data = json_decode((string)$record->data, true);
+                $slots = is_array($data) && isset($data['slots']) && is_array($data['slots']) ? $data['slots'] : array();
+                echo '<details class="ls-detachment-existing"><summary>' . esc_html($record->title) . ' (' . esc_html($record->slug) . ')</summary>';
+                if ($editable) { echo self::detachment_fields($release_id, (string)$record->title, (string)$record->slug, $slots, (int)$record->id); }
+                else { echo '<p>Read-only definition; clone this release to edit.</p>'; }
+                if ($slots) { echo '<ul>'; foreach ($slots as $slot) { echo '<li>' . esc_html((string)($slot['role'] ?? '')) . ': ' . (int)($slot['min'] ?? 0) . '–' . (int)($slot['max'] ?? 0) . '</li>'; } echo '</ul>'; }
+                echo '</details>';
+            }
+            echo '</section>';
+        }
+    }
+
     public static function admin(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('edition_transitioned'=>'Edition publication status updated.','edition_transition_blocked'=>'Edition status unchanged. An edition with published releases or existing armies cannot return to draft.','saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','release_transitioned'=>'Release status updated; existing army and battle records were preserved.','release_transition_blocked'=>'Release status unchanged. Used releases cannot return to draft; clone a new draft for FAQ corrections.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
-        $chambers = array('editions'=>'Editions', 'releases'=>'Releases', 'factions'=>'Factions', 'units'=>'Units', 'wargear'=>'Weapons & Wargear', 'rules'=>'Rules & Traits');
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('edition_transitioned'=>'Edition publication status updated.','edition_transition_blocked'=>'Edition status unchanged. An edition with published releases or existing armies cannot return to draft.','detachment_saved'=>'Detachment definition saved.','detachment_invalid'=>'Detachment not saved. Check the draft release, slug and slot limits.','saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','release_transitioned'=>'Release status updated; existing army and battle records were preserved.','release_transition_blocked'=>'Release status unchanged. Used releases cannot return to draft; clone a new draft for FAQ corrections.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        $chambers = array('editions'=>'Editions', 'releases'=>'Releases', 'factions'=>'Factions', 'units'=>'Units', 'wargear'=>'Weapons & Wargear', 'rules'=>'Rules & Traits', 'detachments'=>'Detachments');
         $chamber = self::admin_chamber($_GET);
         echo '<nav class="nav-tab-wrapper ls-chambers" aria-label="Armoury chambers">';
         foreach ($chambers as $key => $label) {
@@ -802,7 +878,8 @@ final class LS_Armoury {
             echo '<a class="nav-tab ' . ($chamber === $key ? 'nav-tab-active' : '') . '" href="' . esc_url($url) . '">' . esc_html($label) . '</a>';
         }
         echo '</nav><div class="ls-chamber-content">';
-        if ($chamber === 'editions') {
+        if ($chamber === 'detachments') { self::detachment_chamber($releases); }
+        elseif ($chamber === 'editions') {
         echo '<h2>1. Editions</h2>' . self::form('edition', '<p><label>Title <input required name="ls_title" placeholder="Horus Heresy Third Edition"></label> <label>Slug <input name="ls_slug" placeholder="hh-3"></label></p>');
         echo '<h2>Existing editions</h2><p class="description">Publish an edition to make its published ruleset releases available to commanders. An edition with published releases or armies cannot return to draft.</p>';
         if (!$editions) { echo '<p>No editions have been created yet.</p>'; }
