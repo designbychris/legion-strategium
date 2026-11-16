@@ -16,7 +16,7 @@ final class ArmouryDetachmentAuthoringTest extends TestCase {
         $source = file_get_contents(dirname(__DIR__) . '/includes/class-ls-armoury.php');
         self::assertStringContainsString("check_admin_referer('ls_detachment_save')", $source);
         self::assertStringContainsString('self::detachment_editable($release)', $source);
-        self::assertStringContainsString("!self::release_has_armies($release_id)", $source);
+        self::assertStringContainsString('!self::release_has_armies($release_id)', $source);
         self::assertStringContainsString('Add detachment definition', $source);
     }
     public function test_frontend_unit_heading_and_buttons_have_scoped_styles(): void {
