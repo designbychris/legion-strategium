@@ -1,5 +1,11 @@
 <?php
 use PHPUnit\Framework\TestCase;
+// Standalone PHPUnit does not bootstrap WordPress; provide its text sanitizer for this test.
+if (!function_exists('sanitize_text_field')) {
+    function sanitize_text_field($value) {
+        return trim(strip_tags((string) $value));
+    }
+}
 require_once dirname(__DIR__) . '/includes/class-ls-armoury.php';
 final class ArmouryDetachmentAuthoringTest extends TestCase {
     public function test_detachment_chamber_is_allowlisted(): void {
