@@ -189,7 +189,7 @@ final class LS_Muster {
             foreach ($sources as $source) { $data = json_decode((string)$source->data, true); $points = is_array($data) ? (int)($data['base_points'] ?? 0) : 0; $out .= '<option value="' . (int)$source->id . '">' . esc_html($source->title . ' — ' . $points . ' pts') . '</option>'; }
             $out .= '</select></label><label>Quantity <input type="number" name="ls_quantity" min="1" max="100" value="1" required></label><button class="ls-button" type="submit">Add to Army</button></form>';
         } else { $out .= '<p class="ls-muted">No units are available for this army’s faction and release.</p>'; }
-        return $out . '<p class="ls-muted">Base unit costs only. Model additions and upgrades arrive in II.5C.</p></div>';
+        return $out . '<p class="ls-muted">Unit points include saved Quartermaster selections. Army-wide validation arrives in a later phase.</p></div>';
     }
     public static function render(string $return): string {
         if (!is_user_logged_in()) { return ''; }

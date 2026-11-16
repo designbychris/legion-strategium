@@ -26,3 +26,49 @@
 .ls-roster-config legend{font-weight:700;margin-bottom:10px}
 .ls-roster-config label{display:flex;flex-direction:column;gap:5px;font-size:.9rem}
 .ls-roster-config input[type=number]{width:100%;max-width:120px;min-height:38px}
+
+/* II.5C.2 — The Muster Finds Its Finery. All selectors scoped to the Muster. */
+.ls-shell .ls-muster{--muster-gold:#d8b16b;--muster-text:#f5ebd9;--muster-muted:#d4c4ab;color:var(--muster-text);line-height:1.5}
+.ls-shell .ls-muster *{box-sizing:border-box}
+.ls-shell .ls-muster h3,.ls-shell .ls-muster h4{color:var(--muster-gold);line-height:1.3}
+.ls-shell .ls-muster h3{margin:.35rem 0 .7rem}
+.ls-shell .ls-muster h4{margin:.8rem 0}
+.ls-shell .ls-muster-list{grid-template-columns:minmax(0,1fr);gap:1.4rem;margin:1.4rem 0 2rem}
+.ls-shell .ls-muster-army{min-width:0;gap:1rem;padding:clamp(1rem,2.5vw,1.7rem);border:1px solid #82643d;border-left:4px solid var(--muster-gold);background:#332d26;border-radius:9px;box-shadow:0 6px 18px #0002}
+.ls-shell .ls-muster-army>strong{display:block;font-family:Georgia,serif;font-size:1.35rem;line-height:1.3;overflow-wrap:anywhere;color:#fff1d2}
+.ls-shell .ls-muster-army>span{display:block;font-size:.9rem;line-height:1.5;color:var(--muster-gold);overflow-wrap:anywhere}
+.ls-shell .ls-muster-army>form{display:flex;flex-wrap:wrap;align-items:end;gap:.7rem;border-top:1px solid #5f513e;padding-top:1rem}
+.ls-shell .ls-muster-army>form label{flex:1 1 220px;min-width:0}
+.ls-shell .ls-muster form label{color:#f0e4d0;font-weight:600;line-height:1.4}
+.ls-shell .ls-muster form input,.ls-shell .ls-muster form select{display:block;min-height:44px;width:100%;max-width:100%;background:#1b1815!important;color:#fff4df!important;border:1px solid #a28b68!important;border-radius:5px;padding:.6rem .75rem;line-height:1.35;opacity:1}
+.ls-shell .ls-muster form input::placeholder{color:#b7aa98;opacity:1}
+.ls-shell .ls-muster form input:focus-visible,.ls-shell .ls-muster form select:focus-visible{outline:3px solid #e5bd73;outline-offset:2px}
+.ls-shell .ls-muster form button.ls-button,.ls-shell .ls-muster form button.ls-secondary{display:inline-flex;align-items:center;justify-content:center;width:auto;max-width:100%;min-height:44px;padding:.65rem 1.2rem;border:1px solid #d8b16b;border-radius:5px;background:#d8b16b!important;color:#201a14!important;font-size:.94rem;font-weight:700;line-height:1.3;text-align:center;text-decoration:none;opacity:1!important;visibility:visible;cursor:pointer;box-shadow:none;text-shadow:none;transition:background .15s,border-color .15s,color .15s}
+.ls-shell .ls-muster form button.ls-secondary{background:#473a2b!important;color:#fff0d5!important}
+.ls-shell .ls-muster form button.ls-button:hover{background:#f1cf8f!important;border-color:#f1cf8f;color:#1d1710!important}
+.ls-shell .ls-muster form button.ls-secondary:hover{background:#665035!important;border-color:#f1cf8f;color:#fff9eb!important}
+.ls-shell .ls-muster form button:focus-visible{outline:3px solid #fff3ce;outline-offset:3px}
+.ls-shell .ls-muster form button:disabled{opacity:.55!important;cursor:not-allowed}
+.ls-shell .ls-muster-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:1rem;padding:1.25rem;border:1px solid #725b39;border-radius:8px;background:#302a23}
+.ls-shell .ls-muster-form button{grid-column:1/-1;justify-self:start}
+.ls-shell .ls-roster{min-width:0;margin-top:.2rem;padding:clamp(.9rem,2vw,1.4rem);background:#24201b;border-color:#796344;border-radius:8px}
+.ls-shell .ls-roster>h4{display:flex;flex-wrap:wrap;align-items:baseline;gap:.6rem 1rem;margin:0 0 1rem;padding-bottom:.8rem;border-bottom:1px solid #69563c;font-size:1.1rem}
+.ls-shell .ls-roster>h4 span{display:inline-block;margin-left:auto;padding:.25rem .65rem;border:1px solid #a88750;border-radius:4px;background:#3a3023;color:#f8d796;font-size:1rem;font-weight:700;white-space:nowrap}
+.ls-shell .ls-roster-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:1rem;padding:1.2rem 0;border-top:1px solid #5b4d3b}
+.ls-shell .ls-roster-entry>div{grid-column:1/-1;display:grid;gap:.35rem;min-width:0}
+.ls-shell .ls-roster-entry>div strong{display:block;font-size:1.1rem;line-height:1.4;color:#fff0d3;overflow-wrap:anywhere}
+.ls-shell .ls-roster-entry>div small{display:block;font-size:.87rem;color:#e0bf83;line-height:1.5}
+.ls-shell .ls-roster-entry>form{display:flex;flex-wrap:wrap;align-items:end;gap:.7rem;min-width:0}
+.ls-shell .ls-roster-entry>form label{width:110px;max-width:100%}
+.ls-shell .ls-roster-entry>form input[type=number]{width:100%}
+.ls-shell .ls-roster-entry>form.ls-roster-config{grid-column:1/-1;display:block;width:100%;margin:0;padding:1rem;border:1px solid #887048;border-radius:7px;background:#342c22}
+.ls-shell .ls-roster-config fieldset{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:1rem;margin:0 0 1rem;border:0;padding:0;min-width:0}
+.ls-shell .ls-roster-config legend{grid-column:1/-1;width:100%;margin-bottom:.8rem;color:#f4d18e;font-size:1rem;font-weight:700}
+.ls-shell .ls-roster-config label{display:grid;gap:.4rem;max-width:none;width:auto;min-width:0}
+.ls-shell .ls-roster-config input[type=number]{width:100%;max-width:180px}
+.ls-shell .ls-roster-add{grid-template-columns:minmax(0,1fr) 110px auto;gap:.9rem;padding-top:1.2rem;margin-top:.7rem;border-top:1px solid #786241}
+.ls-shell .ls-roster-add label{min-width:0}
+.ls-shell .ls-roster .ls-muted{line-height:1.6;margin:.8rem 0 0}
+@media(max-width:760px){.ls-shell .ls-muster-form{grid-template-columns:repeat(2,minmax(0,1fr))}.ls-shell .ls-muster-form label:first-of-type{grid-column:1/-1}.ls-shell .ls-roster-add{grid-template-columns:minmax(0,1fr) 105px}.ls-shell .ls-roster-add button{grid-column:1/-1;justify-self:start}}
+@media(max-width:520px){.ls-shell .ls-muster{padding:1rem}.ls-shell .ls-muster-form{grid-template-columns:minmax(0,1fr)}.ls-shell .ls-muster-form label:first-of-type{grid-column:auto}.ls-shell .ls-roster-entry{grid-template-columns:minmax(0,1fr)}.ls-shell .ls-roster-entry>div,.ls-shell .ls-roster-entry>form.ls-roster-config{grid-column:1}.ls-shell .ls-roster-entry>form{justify-content:flex-start}.ls-shell .ls-roster-add{grid-template-columns:minmax(0,1fr)}.ls-shell .ls-roster-add button{grid-column:auto}.ls-shell .ls-roster>h4 span{margin-left:0}}
+@media(prefers-reduced-motion:reduce){.ls-shell .ls-muster form button.ls-button{transition:none}}
