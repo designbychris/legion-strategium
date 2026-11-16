@@ -5,6 +5,7 @@ final class LS_Muster {
     public static function boot(): void {
         add_action('admin_post_ls_muster_create', array(__CLASS__, 'create'));
         add_action('admin_post_ls_muster_rename', array(__CLASS__, 'rename'));
+        add_action('admin_post_ls_muster_unit', array(__CLASS__, 'change_unit'));
     }
     public static function table(string $name): string { return LS_Schema::table($name); }
     public static function return_url(): string {
@@ -53,6 +54,87 @@ final class LS_Muster {
         $updated = $wpdb->update(self::table('armies'), array('title'=>$title, 'updated_at'=>current_time('mysql', true)), array('id'=>$id, 'user_id'=>get_current_user_id()), array('%s','%s'), array('%d','%d'));
         self::redirect($updated === false || $updated === 0 ? 'not_changed' : 'renamed');
     }
+    /** Catalogue records are read-only sources; army entries are independent snapshots. */
+    public static function catalogue_units(int $release_id, int $faction_id): array {
+        global $wpdb;
+        return $wpdb->get_results($wpdb->prepare('SELECT id, title, slug, data FROM ' . self::table('units') . ' WHERE release_id = %d AND faction_id = %d ORDER BY title, id', $release_id, $faction_id)) ?: array();
+    }
+    public static function roster_from_json(string $json): array {
+        $roster = json_decode($json, true);
+        if (!is_array($roster)) { return array('schema'=>1, 'faction_id'=>0, 'units'=>array()); }
+        if (!isset($roster['units']) || !is_array($roster['units'])) { $roster['units'] = array(); }
+        return $roster;
+    }
+    public static function roster_points(array $roster): int {
+        $total = 0;
+        foreach ($roster['units'] ?? array() as $entry) {
+            if (!is_array($entry)) { continue; }
+            $total += max(0, (int)($entry['base_points'] ?? 0)) * max(1, (int)($entry['quantity'] ?? 1));
+        }
+        return $total;
+    }
+    public static function change_unit(): void {
+        if (!is_user_logged_in()) { wp_die(esc_html__('Sign in to edit an army.', 'legion-strategium')); }
+        check_admin_referer('ls_muster_unit');
+        $army_id = isset($_POST['ls_army_id']) ? absint($_POST['ls_army_id']) : 0;
+        $operation = isset($_POST['ls_operation']) ? sanitize_key(wp_unslash((string)$_POST['ls_operation'])) : '';
+        $unit_id = isset($_POST['ls_unit_id']) ? absint($_POST['ls_unit_id']) : 0;
+        $entry_id = isset($_POST['ls_entry_id']) ? sanitize_key(wp_unslash((string)$_POST['ls_entry_id'])) : '';
+        $quantity = isset($_POST['ls_quantity']) ? filter_var(wp_unslash($_POST['ls_quantity']), FILTER_VALIDATE_INT) : false;
+        if (!$army_id || !in_array($operation, array('add', 'quantity', 'remove'), true)) { self::redirect('invalid_unit'); }
+        global $wpdb;
+        $army = $wpdb->get_row($wpdb->prepare('SELECT id, release_id, roster FROM ' . self::table('armies') . ' WHERE id = %d AND user_id = %d', $army_id, get_current_user_id()));
+        if (!$army) { self::redirect('invalid_unit'); }
+        $roster = self::roster_from_json((string)$army->roster);
+        $units = array_values($roster['units']);
+        if ($operation === 'add') {
+            if ($quantity === false || $quantity < 1 || $quantity > 100 || count($units) >= 200) { self::redirect('invalid_unit'); }
+            $source = null;
+            foreach (self::catalogue_units((int)$army->release_id, (int)($roster['faction_id'] ?? 0)) as $candidate) {
+                if ((int)$candidate->id === $unit_id) { $source = $candidate; break; }
+            }
+            if (!$source) { self::redirect('invalid_unit'); }
+            $data = json_decode((string)$source->data, true);
+            $points = is_array($data) ? ($data['base_points'] ?? null) : null;
+            if (!is_numeric($points) || (int)$points < 0 || (int)$points > 100000) { self::redirect('invalid_unit'); }
+            $units[] = array('entry_id'=>wp_generate_uuid4(), 'catalogue_unit_id'=>(int)$source->id, 'slug'=>(string)$source->slug, 'title'=>(string)$source->title, 'base_points'=>(int)$points, 'quantity'=>$quantity, 'source_data'=>is_array($data) ? $data : array());
+        } else {
+            $found = false;
+            foreach ($units as $index=>$entry) {
+                if (!is_array($entry) || ($entry['entry_id'] ?? '') !== $entry_id || $entry_id === '') { continue; }
+                $found = true;
+                if ($operation === 'remove') { array_splice($units, $index, 1); }
+                elseif ($quantity !== false && $quantity >= 1 && $quantity <= 100) { $units[$index]['quantity'] = $quantity; }
+                else { self::redirect('invalid_unit'); }
+                break;
+            }
+            if (!$found) { self::redirect('invalid_unit'); }
+        }
+        $roster['units'] = $units;
+        $updated = $wpdb->update(self::table('armies'), array('roster'=>wp_json_encode($roster), 'updated_at'=>current_time('mysql', true)), array('id'=>$army_id, 'user_id'=>get_current_user_id()), array('%s','%s'), array('%d','%d'));
+        self::redirect($updated === false ? 'error_unit' : 'unit_saved');
+    }
+    public static function render_roster(object $army, array $roster, string $return): string {
+        $total = self::roster_points($roster);
+        $out = '<div class="ls-roster"><h4>Army roster <span>' . esc_html(number_format_i18n($total)) . ' pts</span></h4>';
+        if (empty($roster['units'])) { $out .= '<p class="ls-muted">No warriors assigned yet.</p>'; }
+        foreach ($roster['units'] as $entry) {
+            if (!is_array($entry)) { continue; }
+            $id = (string)($entry['entry_id'] ?? '');
+            $qty = max(1, (int)($entry['quantity'] ?? 1));
+            $points = max(0, (int)($entry['base_points'] ?? 0));
+            $out .= '<div class="ls-roster-entry"><div><strong>' . esc_html((string)($entry['title'] ?? 'Unit')) . '</strong><small>' . esc_html((string)$points) . ' pts each · ' . esc_html((string)($qty * $points)) . ' pts total</small></div>';
+            $out .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="quantity"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false) . '<label>Quantity <input type="number" name="ls_quantity" min="1" max="100" value="' . $qty . '" required></label><button class="ls-button ls-secondary" type="submit">Update</button></form>';
+            $out .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="remove"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_entry_id" value="' . esc_attr($id) . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false) . '<button class="ls-button ls-secondary" type="submit">Remove</button></form></div>';
+        }
+        $sources = self::catalogue_units((int)$army->release_id, (int)($roster['faction_id'] ?? 0));
+        if ($sources) {
+            $out .= '<form class="ls-roster-add" method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_unit"><input type="hidden" name="ls_operation" value="add"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_unit', '_wpnonce', true, false) . '<label>Add unit <select name="ls_unit_id" required>';
+            foreach ($sources as $source) { $data = json_decode((string)$source->data, true); $points = is_array($data) ? (int)($data['base_points'] ?? 0) : 0; $out .= '<option value="' . (int)$source->id . '">' . esc_html($source->title . ' — ' . $points . ' pts') . '</option>'; }
+            $out .= '</select></label><label>Quantity <input type="number" name="ls_quantity" min="1" max="100" value="1" required></label><button class="ls-button" type="submit">Add to Army</button></form>';
+        } else { $out .= '<p class="ls-muted">No units are available for this army’s faction and release.</p>'; }
+        return $out . '<p class="ls-muted">Base unit costs only. Model additions and upgrades arrive in II.5C.</p></div>';
+    }
     public static function render(string $return): string {
         if (!is_user_logged_in()) { return ''; }
         global $wpdb;
@@ -60,17 +142,17 @@ final class LS_Muster {
         $armies = $wpdb->get_results($wpdb->prepare('SELECT a.id, a.title, a.release_id, a.roster, a.updated_at, r.version, e.title AS edition_title FROM ' . self::table('armies') . ' a LEFT JOIN ' . self::table('releases') . ' r ON r.id = a.release_id LEFT JOIN ' . self::table('editions') . ' e ON e.id = r.edition_id WHERE a.user_id = %d ORDER BY a.updated_at DESC, a.id DESC LIMIT 100', $user_id)) ?: array();
         $releases = self::available_releases();
         $notice = isset($_GET['ls_muster_notice']) ? sanitize_key(wp_unslash((string)$_GET['ls_muster_notice'])) : '';
-        $messages = array('created'=>'Army muster created.', 'renamed'=>'Army renamed.', 'invalid'=>'Please choose a valid title, published release and faction.', 'error'=>'Could not create the army. Please try again.', 'not_changed'=>'No changes were saved.');
+        $messages = array('created'=>'Army muster created.', 'renamed'=>'Army renamed.', 'invalid'=>'Please choose a valid title, published release and faction.', 'error'=>'Could not create the army. Please try again.', 'not_changed'=>'No changes were saved.', 'unit_saved'=>'Army roster updated.', 'invalid_unit'=>'Invalid unit, quantity or army. No changes were saved.', 'error_unit'=>'Could not save the roster. Please try again.');
         $out = '<section class="ls-muster" id="ls-muster"><p class="ls-kicker">THE MUSTER ROLLS</p><h3>My Armies</h3><p>Create a private army and choose its edition, rules release and faction. Unit selection arrives in the next phase.</p>';
         if (isset($messages[$notice])) { $out .= '<p class="ls-notice" role="status">' . esc_html($messages[$notice]) . '</p>'; }
         $out .= '<div class="ls-muster-list">';
         if (!$armies) { $out .= '<p class="ls-muted">No armies mustered yet. Begin your first force below.</p>'; }
         foreach ($armies as $army) {
-            $roster = json_decode((string)$army->roster, true);
+            $roster = self::roster_from_json((string)$army->roster);
             $faction_id = is_array($roster) ? (int)($roster['faction_id'] ?? 0) : 0;
             $faction_name = 'Unassigned faction';
             foreach (self::factions((int)$army->release_id) as $faction) { if ((int)$faction->id === $faction_id) { $faction_name = (string)$faction->title; break; } }
-            $out .= '<article class="ls-muster-army"><strong>' . esc_html($army->title) . '</strong><span>' . esc_html((string)$army->edition_title . ' · ' . (string)$army->version . ' · ' . $faction_name) . '</span><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_rename"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_rename', '_wpnonce', true, false) . '<label>Army name <input name="ls_army_title" maxlength="190" required value="' . esc_attr($army->title) . '"></label><button class="ls-button ls-secondary" type="submit">Rename</button></form></article>';
+            $out .= '<article class="ls-muster-army"><strong>' . esc_html($army->title) . '</strong><span>' . esc_html((string)$army->edition_title . ' · ' . (string)$army->version . ' · ' . $faction_name) . '</span><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_muster_rename"><input type="hidden" name="ls_army_id" value="' . (int)$army->id . '"><input type="hidden" name="ls_return" value="' . esc_attr($return) . '">' . wp_nonce_field('ls_muster_rename', '_wpnonce', true, false) . '<label>Army name <input name="ls_army_title" maxlength="190" required value="' . esc_attr($army->title) . '"></label><button class="ls-button ls-secondary" type="submit">Rename</button></form>' . self::render_roster($army, $roster, $return) . '</article>';
         }
         $out .= '</div><h4>Raise a New Army</h4>';
         if (!$releases) { return $out . '<p class="ls-muted">No published editions and releases are available yet. Ask an administrator to publish a rules release.</p></section>'; }
