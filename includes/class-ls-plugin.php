@@ -5,6 +5,7 @@ final class LS_Plugin {
         add_action('admin_init', array(__CLASS__, 'upgrade_schema'));
         LS_Accounts::boot();
         LS_Armoury::boot();
+        LS_Muster::boot();
         add_action('admin_menu', array(__CLASS__, 'admin_menu'));
         add_action('rest_api_init', array(__CLASS__, 'routes'));
         add_shortcode('legion_strategium', array(__CLASS__, 'shortcode'));
@@ -30,7 +31,7 @@ final class LS_Plugin {
         $head = '<section class="ls-shell"><p class="ls-kicker">LEGION STRATEGIUM</p><h2>The Legion Strategium</h2><p>Army Builder &amp; Battle Companion</p>' . LS_Accounts::notice();
         if (is_user_logged_in()) {
             $user = wp_get_current_user();
-            return $head . '<div class="ls-command"><p class="ls-kicker">COMMAND DECK</p><h3>Welcome, ' . esc_html(LS_Accounts::commander_name((int)$user->ID)) . '</h3><p>Your command dashboard is ready. The Armoury is now open for browsing. Army creation will arrive in a later phase.</p><div class="ls-stat-grid"><div><strong>0</strong><span>Armies</span></div><div><strong>0</strong><span>Battles</span></div><div><strong>3rd</strong><span>Initial edition</span></div></div>' . LS_Armoury::catalogue() . LS_Accounts::profile_form($return) . LS_Accounts::account_form($return) . LS_Accounts::form('logout', $return) . '</div></section>';
+            return $head . '<div class="ls-command"><p class="ls-kicker">COMMAND DECK</p><h3>Welcome, ' . esc_html(LS_Accounts::commander_name((int)$user->ID)) . '</h3><p>Your command dashboard is ready. The Armoury is now open for browsing. You can now create your first private army muster.</p><div class="ls-stat-grid"><div><strong>0</strong><span>Armies</span></div><div><strong>0</strong><span>Battles</span></div><div><strong>3rd</strong><span>Initial edition</span></div></div>' . LS_Muster::render($return) . LS_Armoury::catalogue() . LS_Accounts::profile_form($return) . LS_Accounts::account_form($return) . LS_Accounts::form('logout', $return) . '</div></section>';
         }
         $register = (bool)get_option('users_can_register');
         $mode = isset($_GET['ls_view']) && sanitize_key(wp_unslash($_GET['ls_view'])) === 'register' && $register ? 'register' : 'login';

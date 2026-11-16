@@ -13,6 +13,7 @@ define('LS_URL', plugin_dir_url(__FILE__));
 require_once LS_PATH . 'includes/class-ls-schema.php';
 require_once LS_PATH . 'includes/class-ls-accounts.php';
 require_once LS_PATH . 'includes/class-ls-armoury.php';
+require_once LS_PATH . 'includes/class-ls-muster.php';
 require_once LS_PATH . 'includes/class-ls-plugin.php';
 register_activation_hook(__FILE__, array('LS_Schema', 'activate'));
 add_action('plugins_loaded', array('LS_Plugin', 'boot'));

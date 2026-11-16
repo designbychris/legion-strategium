@@ -14,3 +14,6 @@
 .ls-unit-profile>div {border:1px solid rgba(201,160,82,.35);border-radius:4px;padding:7px;}
 .ls-unit-profile dt {font-size:.72rem;opacity:.8;}
 .ls-unit-profile dd {margin:3px 0 0;font-weight:700;color:#c9a052;}
+
+/* II.5A — The Muster Rolls Open */
+.ls-muster{margin:2rem 0;padding:clamp(1rem,3vw,2rem);background:#29251f;border:1px solid #8c7148;border-radius:9px}.ls-muster h3,.ls-muster h4{color:#c9a052}.ls-muster-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:1rem}.ls-muster-army{padding:1rem;background:#39332b;border:1px solid #62513a;border-radius:6px;display:grid;gap:.7rem}.ls-muster-army strong{font-size:1.1rem;color:#e8dcc3}.ls-muster-army span{font-size:.86rem;color:#c9a052}.ls-muster-form,.ls-muster-army form{display:grid;gap:.9rem}.ls-muster-form{grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end}.ls-muster form label{display:grid;gap:.4rem;font-weight:600}.ls-muster input,.ls-muster select{box-sizing:border-box;min-width:0;width:100%;min-height:43px;background:#171511;border:1px solid #82786a;border-radius:5px;color:#e8dcc3;padding:.6rem}.ls-muster select option{background:#171511;color:#e8dcc3}.ls-muster form button{min-height:43px}.ls-muster input:focus-visible,.ls-muster select:focus-visible{outline:2px solid #c9a052;outline-offset:2px}
