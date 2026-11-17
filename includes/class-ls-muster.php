@@ -282,6 +282,37 @@ final class LS_Muster {
         }
         return array('summary'=>$summary, 'issues'=>$issues, 'limits_configured'=>false, 'fully_validated'=>false);
     }
+    /** Release-snapshot prerequisites: only roster entries with matching saved slugs count. */
+    public static function prerequisite_review(array $roster): array {
+        $counts = array();
+        foreach ($roster['units'] ?? array() as $entry) {
+            if (!is_array($entry)) { continue; }
+            $slug = isset($entry['slug']) && is_string($entry['slug']) ? $entry['slug'] : '';
+            $quantity = $entry['quantity'] ?? 0;
+            if ($slug === '' || !is_numeric($quantity) || (int)$quantity < 1 || (int)$quantity > 100) { continue; }
+            $counts[$slug] = ($counts[$slug] ?? 0) + (int)$quantity;
+        }
+        $issues = array();
+        foreach ($roster['units'] ?? array() as $entry) {
+            if (!is_array($entry)) { continue; }
+            $data = isset($entry['source_data']) && is_array($entry['source_data']) ? $entry['source_data'] : array();
+            $requirements = isset($data['unit_prerequisites']) && is_array($data['unit_prerequisites']) ? $data['unit_prerequisites'] : array();
+            foreach (array_slice($requirements, 0, 8) as $requirement) {
+                if (!is_array($requirement)) { continue; }
+                $slug = isset($requirement['slug']) && is_string($requirement['slug']) ? $requirement['slug'] : '';
+                $min = $requirement['min'] ?? null;
+                if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug) || !is_numeric($min) || (int)$min < 1 || (int)$min > 100) {
+                    $issues[] = (string)($entry['title'] ?? 'Unit') . ': invalid saved prerequisite definition.';
+                    continue;
+                }
+                $present = $counts[$slug] ?? 0;
+                if ($present < (int)$min) {
+                    $issues[] = (string)($entry['title'] ?? 'Unit') . ': requires ' . (int)$min . ' selection(s) of ' . $slug . '; ' . $present . ' present.';
+                }
+            }
+        }
+        return array('issues'=>array_values(array_unique($issues)), 'fully_validated'=>false);
+    }
     /** Advisory checks: never prevent a commander from saving a work-in-progress. */
     public static function muster_review(array $roster): array {
         $total = self::roster_points($roster);
@@ -386,7 +417,15 @@ final class LS_Muster {
             foreach ($composition['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
             $out .= '</ul>';
         }
-        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Detachment slot checks appear below when definitions are available. Other release-specific army restrictions are not yet validated.</p></section></div>';
+        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Detachment slot checks appear below when definitions are available. Other release-specific army restrictions are not yet validated.</p></section>';
+        $prerequisites = self::prerequisite_review($roster);
+        $out .= '<section class="ls-muster-prerequisites" aria-label="Unit prerequisites"><h5>Unit prerequisites</h5>';
+        if ($prerequisites['issues']) {
+            $out .= '<ul class="ls-muster-issues">';
+            foreach ($prerequisites['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
+            $out .= '</ul>';
+        } else { $out .= '<p class="ls-muted">No unmet unit prerequisites in saved datasheets.</p>'; }
+        $out .= '<p class="ls-muted">Advisory prerequisite checks only; other Third Edition restrictions are not yet validated.</p></section></div>';
 
         $detachments = isset($roster['detachments']) && is_array($roster['detachments']) ? $roster['detachments'] : array();
         $detachment_review = self::detachment_review($roster);

@@ -461,6 +461,21 @@ final class LS_Armoury {
         $sql = 'SELECT * FROM ' . LS_Schema::table($table) . ($where ? ' WHERE ' . $where : '') . ' ORDER BY id DESC';
         return (array)$wpdb->get_results($args ? $wpdb->prepare($sql, $args) : $sql);
     }
+    /** Bounded release-local unit prerequisites. Blank rows are ignored. */
+    public static function sanitise_unit_prerequisites($input, string $own_slug = ''): array {
+        if (!is_array($input)) { return array(); }
+        $result = array();
+        foreach (array_slice($input, 0, 8) as $row) {
+            if (!is_array($row)) { continue; }
+            $slug = isset($row['slug']) && is_scalar($row['slug']) ? strtolower(trim((string)$row['slug'])) : '';
+            if ($slug === '') { continue; }
+            if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug) || $slug === $own_slug || isset($result[$slug])) { continue; }
+            $minimum = filter_var($row['min'] ?? 1, FILTER_VALIDATE_INT);
+            if ($minimum === false || $minimum < 1 || $minimum > 100) { continue; }
+            $result[$slug] = array('slug'=>$slug, 'min'=>$minimum);
+        }
+        return array_values($result);
+    }
     public static function save(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         check_admin_referer('ls_armoury_save');
@@ -540,6 +555,17 @@ final class LS_Armoury {
                                 if (!is_array($data)) { $data = array(); }
                                 $data['role'] = $role;
                                 $data['base_points'] = $points;
+                                if (isset($_POST['ls_unit_prerequisites_present'])) {
+                                    $raw_requirements = isset($_POST['ls_unit_prerequisites']) && is_array($_POST['ls_unit_prerequisites']) ? wp_unslash($_POST['ls_unit_prerequisites']) : array();
+                                    $requirements = self::sanitise_unit_prerequisites($raw_requirements, (string)$record->slug);
+                                    // A prerequisite must refer to another unit in this release.
+                                    $available = array_map(static function ($u) { return (string)$u->slug; }, self::rows('units', 'release_id = %d', array((int)$record->release_id)));
+                                    foreach ($requirements as $requirement) {
+                                        if (!in_array($requirement['slug'], $available, true)) { $values = array(); $notice = 'invalid'; break; }
+                                    }
+                                    if ($values) { $data['unit_prerequisites'] = $requirements; }
+                                }
+
                                 $profile_input = isset($_POST['ls_profile']) && is_array($_POST['ls_profile']) ? wp_unslash($_POST['ls_profile']) : array();
                                 $data['profile'] = self::sanitise_profile($profile_input);
                                 if (isset($_POST['ls_model_profiles_present'])) {
@@ -575,8 +601,10 @@ final class LS_Armoury {
                                     $allowed_rules = array_map(static function ($r) { return (string)$r->slug; }, self::rows('rules', 'release_id = %d', array((int)$record->release_id)));
                                     $data['rule_links'] = self::sanitise_rule_links(wp_unslash(isset($_POST['ls_rule_links']) ? $_POST['ls_rule_links'] : array()), $allowed_rules);
                                 }
-                                $values['faction_id'] = $faction;
-                                $values['data'] = wp_json_encode($data);
+                                if ($values) {
+                                    $values['faction_id'] = $faction;
+                                    $values['data'] = wp_json_encode($data);
+                                }
                                 $formats = array('%s','%s','%d','%s');
                             }
                         }
@@ -644,6 +672,12 @@ final class LS_Armoury {
             $profile = isset($data['profile']) && is_array($data['profile']) ? $data['profile'] : array();
             foreach (self::profile_fields() as $key => $label) {
                 $form .= '<label>' . esc_html($label) . '<input maxlength="32" name="ls_profile[' . esc_attr($key) . ']" value="' . esc_attr((string)($profile[$key] ?? '')) . '" placeholder="—"></label>';
+            }
+            $form .= '</div></div><div class="ls-profile-fields"><strong>Unit prerequisites</strong><p class="description">Optional: require another unit from this draft release before this unit is considered compliant. Use its exact slug. Requirements are advisory in the army builder.</p><input type="hidden" name="ls_unit_prerequisites_present" value="1"><div class="ls-profile-grid">';
+            $prerequisites = isset($data['unit_prerequisites']) && is_array($data['unit_prerequisites']) ? $data['unit_prerequisites'] : array();
+            for ($i = 0; $i < 8; $i++) {
+                $requirement = $prerequisites[$i] ?? array();
+                $form .= '<label>Required unit slug <input maxlength="100" name="ls_unit_prerequisites[' . $i . '][slug]" value="' . esc_attr((string)($requirement['slug'] ?? '')) . '" placeholder="e.g. required-unit"></label><label>Minimum selections <input type="number" min="1" max="100" name="ls_unit_prerequisites[' . $i . '][min]" value="' . esc_attr((string)($requirement['min'] ?? 1)) . '"></label>';
             }
             $form .= '</div></div></div><section class="ls-workbench-panel" data-ls-panel="rules"><h3>Special rules and traits</h3>';
             $form .= self::rule_link_fields($record, $data);
