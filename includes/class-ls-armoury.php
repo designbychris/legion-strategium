@@ -284,20 +284,29 @@ final class LS_Armoury {
         return '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"><input type="hidden" name="action" value="ls_armoury_edition_transition"><input type="hidden" name="ls_id" value="' . $id . '"><input type="hidden" name="ls_target" value="' . esc_attr($target) . '">' . wp_nonce_field('ls_armoury_edition_transition', '_wpnonce', true, false) . '<button type="submit" class="button button-secondary">' . esc_html($label) . '</button></form>';
     }
 
+    /** Explain publication prerequisites without changing the draft or its catalogue. */
+    public static function publication_issue(int $factions, int $units, int $invalid_units): string {
+        if ($factions < 1) { return 'publish_no_factions'; }
+        if ($units < 1) { return 'publish_no_units'; }
+        if ($invalid_units > 0) { return 'publish_invalid_units'; }
+        return '';
+    }
+
     /** Publication locks catalogue edits; safe lifecycle changes are handled separately. */
     public static function publish(): void {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         check_admin_referer('ls_armoury_publish');
         $id = isset($_POST['ls_id']) ? absint($_POST['ls_id']) : 0;
         global $wpdb;
-        $notice = 'invalid';
+        $notice = 'publish_not_draft';
         if ($id && self::release_is_draft($id)) {
             $faction_count = (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('factions') . ' WHERE release_id = %d', $id));
             $unit_count = (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('units') . ' WHERE release_id = %d', $id));
             $invalid_units = (int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM ' . LS_Schema::table('units') . ' u LEFT JOIN ' . LS_Schema::table('factions') . ' f ON u.faction_id = f.id AND u.release_id = f.release_id WHERE u.release_id = %d AND f.id IS NULL', $id));
-            if ($faction_count > 0 && $unit_count > 0 && $invalid_units === 0) {
+            $notice = self::publication_issue($faction_count, $unit_count, $invalid_units);
+            if ($notice === '') {
                 $updated = $wpdb->update(LS_Schema::table('releases'), array('status'=>'published','published_at'=>current_time('mysql')), array('id'=>$id,'status'=>'draft'), array('%s','%s'), array('%d','%s'));
-                $notice = $updated === 1 ? 'published' : 'invalid';
+                $notice = $updated === 1 ? 'published' : 'publish_db_failed';
             }
         }
         $context = self::browse_context($_POST);
@@ -869,7 +878,7 @@ final class LS_Armoury {
         if (!current_user_can('manage_options')) { wp_die('Access denied.'); }
         $editions = self::rows('editions'); $releases = self::rows('releases'); $factions = self::rows('factions'); $units = self::rows('units');
         echo '<div class="wrap ls-armoury-admin"><h1>The Armoury Archives</h1><p>Draft catalogue. Use sample or authorised data only. Published releases are locked.</p>';
-        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('edition_transitioned'=>'Edition publication status updated.','edition_transition_blocked'=>'Edition status unchanged. An edition with published releases or existing armies cannot return to draft.','detachment_saved'=>'Detachment definition saved.','detachment_invalid'=>'Detachment not saved. Check the draft release, slug and slot limits.','saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','published'=>'Ruleset published and locked.','release_transitioned'=>'Release status updated; existing army and battle records were preserved.','release_transition_blocked'=>'Release status unchanged. Used releases cannot return to draft; clone a new draft for FAQ corrections.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
+        if (isset($_GET['ls_armoury_notice'])) { echo '<div class="notice notice-info"><p>' . (array('edition_transitioned'=>'Edition publication status updated.','edition_transition_blocked'=>'Edition status unchanged. An edition with published releases or existing armies cannot return to draft.','detachment_saved'=>'Detachment definition saved.','detachment_invalid'=>'Detachment not saved. Check the draft release, slug and slot limits.','saved'=>'Catalogue record added.','updated'=>'Draft record updated.','deleted'=>'Draft record deleted.','publish_no_factions'=>'Release not published: this draft has no factions. Check that its catalogue was copied correctly.', 'publish_no_units'=>'Release not published: this draft has no units. Add or restore a unit before publishing.', 'publish_invalid_units'=>'Release not published: one or more units refer to a missing or different-release faction. Correct those links before publishing.', 'publish_db_failed'=>'Release not published: the database did not update the release status. Check the WordPress database error log.', 'publish_not_draft'=>'Release not published: the selected release is not an editable draft.', 'published'=>'Ruleset published and locked.','release_transitioned'=>'Release status updated; existing army and battle records were preserved.','release_transition_blocked'=>'Release status unchanged. Used releases cannot return to draft; clone a new draft for FAQ corrections.','cloned'=>'New independent draft release created.','release_deleted'=>'Unused draft release and its catalogue records deleted.','release_delete_failed'=>'Release not deleted. Confirm its exact version and ensure it is a draft with no dependent armies or battles.','clone_failed'=>'Could not clone release. Check version uniqueness and catalogue integrity.','option_invalid'=>'Upgrade option not saved: check that every used row has a name, correct option type, valid model and equipment from this release, and valid points/limits. Other changes were not saved.') [sanitize_key(wp_unslash($_GET['ls_armoury_notice']))] ?? 'Could not change record: check relationships, duplicate slugs, or whether the release is locked or in use.') . '</p></div>'; }
         $chambers = array('editions'=>'Editions', 'releases'=>'Releases', 'factions'=>'Factions', 'units'=>'Units', 'wargear'=>'Weapons & Wargear', 'rules'=>'Rules & Traits', 'detachments'=>'Detachments');
         $chamber = self::admin_chamber($_GET);
         echo '<nav class="nav-tab-wrapper ls-chambers" aria-label="Armoury chambers">';
