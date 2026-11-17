@@ -161,6 +161,67 @@ final class LS_Muster {
         }
         return array('assigned'=>$assigned, 'unassigned'=>$unassigned, 'fully_validated'=>false);
     }
+    /** Advisory slot checks against roster-owned detachment definition snapshots. */
+    public static function detachment_slot_review(array $roster): array {
+        $instances = array();
+        $results = array();
+        $issues = array();
+        foreach ($roster['detachments'] ?? array() as $detachment) {
+            if (!is_array($detachment) || empty($detachment['id'])) { continue; }
+            $id = (string)$detachment['id'];
+            if (isset($instances[$id])) { continue; }
+            $instances[$id] = $detachment;
+            $results[$id] = array('title'=>(string)($detachment['title'] ?? 'Detachment'), 'roles'=>array(), 'slots'=>array(), 'issues'=>array(), 'assigned'=>0);
+        }
+        $unassigned = 0;
+        foreach ($roster['units'] ?? array() as $entry) {
+            if (!is_array($entry)) { continue; }
+            $quantity = $entry['quantity'] ?? 0;
+            if (!is_numeric($quantity) || (int)$quantity < 1 || (int)$quantity > 100) { continue; }
+            $quantity = (int)$quantity;
+            $id = (string)($entry['detachment_id'] ?? '');
+            if ($id === '' || !isset($results[$id])) { $unassigned += $quantity; continue; }
+            $data = isset($entry['source_data']) && is_array($entry['source_data']) ? $entry['source_data'] : array();
+            $role = isset($data['role']) && is_string($data['role']) ? trim($data['role']) : '';
+            $results[$id]['assigned'] += $quantity;
+            $results[$id]['roles'][$role] = ($results[$id]['roles'][$role] ?? 0) + $quantity;
+        }
+        foreach ($instances as $id => $detachment) {
+            $data = isset($detachment['source_data']) && is_array($detachment['source_data']) ? $detachment['source_data'] : array();
+            $slots = isset($data['slots']) && is_array($data['slots']) ? $data['slots'] : array();
+            $limits = array();
+            foreach ($slots as $slot) {
+                if (!is_array($slot)) { continue; }
+                $role = isset($slot['role']) && is_string($slot['role']) ? trim($slot['role']) : '';
+                if ($role === '') { continue; }
+                $min = $slot['min'] ?? null;
+                $max = $slot['max'] ?? null;
+                if (!is_numeric($min) || !is_numeric($max) || (int)$min < 0 || (int)$max < (int)$min || (int)$max > 100) {
+                    $results[$id]['issues'][] = 'Invalid saved slot limits for ' . $role . '.';
+                    continue;
+                }
+                if (isset($limits[$role])) {
+                    $results[$id]['issues'][] = 'Duplicate saved slot definition for ' . $role . '.';
+                    continue;
+                }
+                $limits[$role] = array('min'=>(int)$min, 'max'=>(int)$max);
+            }
+            $results[$id]['slots'] = $limits;
+            if (!$limits) { $results[$id]['issues'][] = 'No battlefield-role slots defined for this detachment.'; }
+            foreach ($limits as $role => $limit) {
+                $count = $results[$id]['roles'][$role] ?? 0;
+                if ($count < $limit['min']) { $results[$id]['issues'][] = $role . ': requires at least ' . $limit['min'] . ' selection(s); ' . $count . ' assigned.'; }
+                if ($count > $limit['max']) { $results[$id]['issues'][] = $role . ': allows at most ' . $limit['max'] . ' selection(s); ' . $count . ' assigned.'; }
+            }
+            foreach ($results[$id]['roles'] as $role => $count) {
+                if ($role === '') { $results[$id]['issues'][] = $count . ' selection(s) have no battlefield role.'; }
+                elseif (!isset($limits[$role])) { $results[$id]['issues'][] = $role . ': ' . $count . ' selection(s) are not permitted by this detachment.'; }
+            }
+            foreach ($results[$id]['issues'] as $issue) { $issues[] = $results[$id]['title'] . ': ' . $issue; }
+        }
+        if ($unassigned > 0) { $issues[] = $unassigned . ' unit selection(s) are not assigned to a detachment.'; }
+        return array('detachments'=>$results, 'unassigned'=>$unassigned, 'issues'=>$issues, 'slots_checked'=>count($results) > 0, 'fully_validated'=>false);
+    }
     public static function change_detachment(): void {
         if (!is_user_logged_in()) { wp_die(esc_html__('Sign in to edit an army.', 'legion-strategium')); }
         check_admin_referer('ls_muster_detachment');
@@ -325,10 +386,11 @@ final class LS_Muster {
             foreach ($composition['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
             $out .= '</ul>';
         }
-        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Release-specific role limits and detachment requirements are not yet validated; this is not a full legality check.</p></section></div>';
+        $out .= '<p class="ls-muted">Role counts use saved unit datasheets. Detachment slot checks appear below when definitions are available. Other release-specific army restrictions are not yet validated.</p></section></div>';
 
         $detachments = isset($roster['detachments']) && is_array($roster['detachments']) ? $roster['detachments'] : array();
         $detachment_review = self::detachment_review($roster);
+        $slot_review = self::detachment_slot_review($roster);
         $out .= '<section class="ls-muster-detachments" aria-label="Army detachments"><h5>Army detachments</h5>';
         if (!$detachments) { $out .= '<p class="ls-muted">No detachments selected yet.</p>'; }
         foreach ($detachments as $item) {
@@ -342,8 +404,24 @@ final class LS_Muster {
             foreach ($definitions as $definition) { $out .= '<option value="' . (int)$definition->id . '">' . esc_html((string)$definition->title) . '</option>'; }
             $out .= '</select></label><button class="ls-button ls-secondary" type="submit">Add detachment</button></form>';
         } elseif (!$definitions) { $out .= '<p class="ls-muted">No detachment definitions are available in this rules release yet. Definitions must be authored before detachments can be added.</p>'; }
-        if ($detachment_review['unassigned']) { $out .= '<p class="ls-muted">' . (int)$detachment_review['unassigned'] . ' unit selection(s) are not assigned to a detachment.</p>'; }
-        $out .= '<p class="ls-muted">Assignments are advisory. Detachment slots, role limits and other Third Edition requirements are not yet validated.</p></section>';
+        foreach ($slot_review['detachments'] as $checked) {
+            $out .= '<div class="ls-detachment-check"><strong>' . esc_html($checked['title']) . ' — slot review</strong>';
+            if ($checked['slots']) {
+                $out .= '<ul class="ls-muster-role-list">';
+                foreach ($checked['slots'] as $role => $limit) {
+                    $out .= '<li><span>' . esc_html($role) . ' (' . (int)$limit['min'] . '–' . (int)$limit['max'] . ')</span><strong>' . (int)($checked['roles'][$role] ?? 0) . '</strong></li>';
+                }
+                $out .= '</ul>';
+            }
+            if ($checked['issues']) {
+                $out .= '<ul class="ls-muster-issues">';
+                foreach ($checked['issues'] as $issue) { $out .= '<li>' . esc_html($issue) . '</li>'; }
+                $out .= '</ul>';
+            } else { $out .= '<p class="ls-muted">Saved detachment slot requirements passed.</p>'; }
+            $out .= '</div>';
+        }
+        if ($slot_review['unassigned']) { $out .= '<p class="ls-muted">' . (int)$slot_review['unassigned'] . ' unit selection(s) are not assigned to a detachment.</p>'; }
+        $out .= '<p class="ls-muted">Detachment slot checks use saved release snapshots and are advisory. Other Third Edition requirements are not yet validated; this is not full army legality.</p></section>';
         if (empty($roster['units'])) { $out .= '<p class="ls-muted">No warriors assigned yet.</p>'; }
         foreach ($roster['units'] as $entry) {
             if (!is_array($entry)) { continue; }
